@@ -3,195 +3,138 @@
    © ghobeishawi - All rights reserved.
 ---------------------------------------------------------- */
 
-// متغیرهای سراسری
-let currentExam = null;
-let currentQuestions = [];
-let currentStudentId = null;
-let currentIndex = 0;
-let answers = {};
-let timerInterval = null;
-let timeRemaining = 0;
-let autoSaveInterval = null;
-let offlineQueue = [];
+import { useState, useEffect } from 'react';
 
-// ==========================================
-// توابع کمکی
-// ==========================================
-async function saveAnswersToD1(studentId, examId, answersBatch) {
-  try {
-    const response = await fetch("/api/answers/batch", {
+export function TakeExamScreen({ examId, studentId }) {
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [timeRemaining, setTimeRemaining] = useState(0);
+  const [currentExam, setCurrentExam] = useState(null);
+  const [currentQuestions, setCurrentQuestions] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const examResponse = await fetch(`/api/kv?key=exam:${examId}`);
+        const examData = await examResponse.json();
+        setCurrentExam(examData.v);
+        
+        const questionsResponse = await fetch(`/api/kv?key=questions:${examId}`);
+        const questionsData = await questionsResponse.json();
+        setCurrentQuestions(questionsData.v || []);
+        
+        setTimeRemaining((examData.v.duration || 60) * 60);
+        setIsLoading(false);
+      } catch (err) {
+        setError("خطا در بارگذاری آزمون");
+        setIsLoading(false);
+      }
+    }
+    loadData();
+  }, [examId]);
+
+  useEffect(() => {
+    if (timeRemaining <= 0) {
+      handleSubmit();
+      return;
+    }
+    
+    const timer = setInterval(() => {
+      setTimeRemaining(prev => prev - 1);
+    }, 1000);
+    
+    return () => clearInterval(timer);
+  }, [timeRemaining]);
+
+  useEffect(() => {
+    if (currentQuestions.length === 0) return;
+    
+    const interval = setInterval(() => {
+      const batch = Object.keys(answers).map(qId => ({
+        question_id: qId,
+        selected_option: answers[qId],
+      }));
+      
+      if (batch.length > 0) {
+        fetch("/api/answers/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            student_id: studentId,
+            exam_id: examId,
+            answers_batch: batch
+          })
+        });
+      }
+    }, 30000);
+    
+    return () => clearInterval(interval);
+  }, [answers, examId, studentId]);
+
+  const handleAnswer = (questionId, optionIndex) => {
+    setAnswers(prev => ({ ...prev, [questionId]: optionIndex }));
+  };
+
+  const handleSubmit = async () => {
+    await fetch("/api/answers/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         student_id: studentId,
         exam_id: examId,
-        answers_batch: answersBatch
+        answers_batch: Object.keys(answers).map(qId => ({
+          question_id: qId,
+          selected_option: answers[qId],
+        }))
       })
     });
-    const data = await response.json();
-    return data.ok;
-  } catch (err) {
-    console.error("خطا در ذخیره:", err);
-    return false;
-  }
-}
+    
+    alert("آزمون شما با موفقیت ثبت شد!");
+    window.location.href = "/";
+  };
 
-async function autoSave() {
-  if (!currentStudentId || !currentExam) return;
-  
-  const batch = Object.keys(answers).map(qId => ({
-    question_id: qId,
-    selected_option: answers[qId] || null,
-    time_taken: 0
-  }));
-  
-  if (batch.length === 0) return;
-  
-  const success = await saveAnswersToD1(currentStudentId, currentExam.id, batch);
-  if (!success) {
-    offlineQueue.push(...batch);
-  }
-}
+  if (isLoading) return <div>در حال بارگذاری آزمون...</div>;
+  if (error) return <div>خطا: {error}</div>;
+  if (currentQuestions.length === 0) return <div>سوالی یافت نشد!</div>;
 
-function flushOfflineQueue() {
-  if (offlineQueue.length === 0) return;
-  const batch = [...offlineQueue];
-  offlineQueue = [];
-  saveAnswersToD1(currentStudentId, currentExam.id, batch);
-}
+  const currentQuestion = currentQuestions[currentQuestionIndex];
+  const options = typeof currentQuestion.options === "string" 
+    ? JSON.parse(currentQuestion.options) 
+    : currentQuestion.options;
 
-// ==========================================
-// شروع آزمون
-// ==========================================
-async function startExam(examId, studentId) {
-  currentStudentId = studentId;
-  
-  try {
-    const response = await fetch(`/api/kv?key=exam:${examId}`);
-    const data = await response.json();
-    currentExam = data.v;
-    
-    const qResponse = await fetch(`/api/kv?key=questions:${examId}`);
-    const qData = await qResponse.json();
-    currentQuestions = qData.v || [];
-    
-    if (currentQuestions.length === 0) {
-      alert("سوالی یافت نشد!");
-      return;
-    }
-    
-    timeRemaining = (currentExam.duration || 60) * 60;
-    currentIndex = 0;
-    answers = {};
-    
-    renderQuestion();
-    startTimer();
-    startAutoSave();
-    
-  } catch (err) {
-    alert("خطا در بارگذاری آزمون: " + err.message);
-  }
-}
-
-// ==========================================
-// نمایش سوال
-// ==========================================
-function renderQuestion() {
-  const container = document.getElementById("question-container");
-  if (!container) return;
-  
-  const q = currentQuestions[currentIndex];
-  if (!q) return;
-  
-  let html = `
-    <div class="question-card">
-      <h3>سوال ${currentIndex + 1} از ${currentQuestions.length}</h3>
-      <p class="question-text">${q.question_text}</p>
-      <div class="options">
-  `;
-  
-  const options = typeof q.options === "string" ? JSON.parse(q.options) : q.options;
-  if (Array.isArray(options)) {
-    options.forEach((opt, idx) => {
-      const selected = answers[q.id] === idx ? "selected" : "";
-      html += `
-        <div class="option ${selected}" onclick="selectOption(${idx})">
-          ${opt}
+  return (
+    <div className="exam-container">
+      <div className="timer">زمان باقی‌مانده: {Math.floor(timeRemaining / 60)}:{(timeRemaining % 60).toString().padStart(2, '0')}</div>
+      
+      <div className="question-card">
+        <h3>سوال {currentQuestionIndex + 1} از {currentQuestions.length}</h3>
+        <p className="question-text">{currentQuestion.question_text}</p>
+        
+        <div className="options">
+          {options.map((option, index) => (
+            <div 
+              key={index}
+              className={`option ${answers[currentQuestion.id] === index ? 'selected' : ''}`}
+              onClick={() => handleAnswer(currentQuestion.id, index)}
+            >
+              {option}
+            </div>
+          ))}
         </div>
-      `;
-    });
-  }
-  
-  html += `
       </div>
-      <div class="nav-buttons">
-        ${currentIndex > 0 ? '<button onclick="prevQuestion()">قبلی</button>' : ''}
-        ${currentIndex < currentQuestions.length - 1 ? '<button onclick="nextQuestion()">بعدی</button>' : ''}
-        ${currentIndex === currentQuestions.length - 1 ? '<button onclick="submitExam()">ثبت نهایی</button>' : ''}
+
+      <div className="nav-buttons">
+        {currentQuestionIndex > 0 && (
+          <button onClick={() => setCurrentQuestionIndex(prev => prev - 1)}>قبلی</button>
+        )}
+        {currentQuestionIndex < currentQuestions.length - 1 ? (
+          <button onClick={() => setCurrentQuestionIndex(prev => prev + 1)}>بعدی</button>
+        ) : (
+          <button onClick={handleSubmit}>ثبت نهایی</button>
+        )}
       </div>
     </div>
-  `;
-  
-  container.innerHTML = html;
-}
-
-function selectOption(idx) {
-  const q = currentQuestions[currentIndex];
-  answers[q.id] = idx;
-  renderQuestion();
-}
-
-function nextQuestion() {
-  if (currentIndex < currentQuestions.length - 1) {
-    currentIndex++;
-    renderQuestion();
-  }
-}
-
-function prevQuestion() {
-  if (currentIndex > 0) {
-    currentIndex--;
-    renderQuestion();
-  }
-}
-
-// ==========================================
-// تایمر
-// ==========================================
-function startTimer() {
-  const timerEl = document.getElementById("timer");
-  timerInterval = setInterval(() => {
-    timeRemaining--;
-    if (timeRemaining <= 0) {
-      clearInterval(timerInterval);
-      submitExam();
-      return;
-    }
-    const min = Math.floor(timeRemaining / 60);
-    const sec = timeRemaining % 60;
-    if (timerEl) {
-      timerEl.textContent = `${min}:${sec.toString().padStart(2, "0")}`;
-    }
-  }, 1000);
-}
-
-// ==========================================
-// ذخیره خودکار هر ۳۰ ثانیه
-// ==========================================
-function startAutoSave() {
-  autoSaveInterval = setInterval(autoSave, 30000);
-}
-
-// ==========================================
-// ثبت نهایی
-// ==========================================
-async function submitExam() {
-  clearInterval(timerInterval);
-  clearInterval(autoSaveInterval);
-  
-  await autoSave();
-  await flushOfflineQueue();
-  
-  alert("آزمون شما با موفقیت ثبت شد!");
-  window.location.href = "/";
-}
+  );
+         }
