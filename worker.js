@@ -14,7 +14,8 @@ function json(data, status = 200) {
 }
 
 function uid() {
-  return Math.random().toString(36).substring(2, 10);
+  // ترکیب timestamp (پایه ۳۶) + رشته تصادفی برای کاهش شدید احتمال تکرار
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
 }
 
 function getKV(env) {
@@ -108,8 +109,14 @@ async function handleForgotPassword(request, env) {
         body: JSON.stringify({
           from: env.RESEND_FROM || "onboarding@resend.dev",
           to: teacher.email,
-          subject: "بازیابی رمز عبور - آزمون‌ساز معلم",
-          html: `<p>برای تنظیم رمز عبور جدید روی لینک زیر بزنید (تا ۱ ساعت معتبر است):</p><p><a href="${resetLink}">${resetLink}</a></p>`,
+          subject: "بازیابی رمز عبور — آزمون‌ساز معلم",
+          html: `
+            <div dir="rtl" style="font-family:Tahoma,sans-serif;font-size:15px;line-height:1.9">
+              <p>سلام ${teacher.fullname || ""}،</p>
+              <p>برای تنظیم رمز عبور جدید روی لینک زیر بزن. این لینک تا ۱ ساعت دیگر معتبر است.</p>
+              <p><a href="${resetLink}">${resetLink}</a></p>
+              <p>اگر این درخواست را نداده‌ای، این ایمیل را نادیده بگیر.</p>
+            </div>`,
         }),
       });
     } catch (e) {
@@ -149,7 +156,35 @@ async function handleSaveAnswersBatch(request, env) {
   try {
     const { student_id, exam_id, answers_batch } = await request.json();
     if (!student_id || !exam_id || !Array.isArray(answers_batch)) {
-      return json({ error: "Invalid payload" }, 400);
+      return json({ error: "اطلاعات ارسالی معتبر نیست" }, 400);
+    }
+
+    // اعتبارسنجی هر آیتم قبل از نوشتن در دیتابیس
+    for (const ans of answers_batch) {
+      if (!ans || typeof ans !== "object" || !ans.question_id) {
+        return json({ error: "شناسه سوال برای یکی از پاسخ‌ها وجود ندارد" }, 400);
+      }
+      if (
+        ans.awarded_mark !== undefined &&
+        ans.awarded_mark !== null &&
+        (typeof ans.awarded_mark !== "number" || !Number.isFinite(ans.awarded_mark) || ans.awarded_mark < 0)
+      ) {
+        return json({ error: "نمره ثبت‌شده برای یکی از پاسخ‌ها نامعتبر است" }, 400);
+      }
+      if (
+        ans.is_correct !== undefined &&
+        ans.is_correct !== null &&
+        typeof ans.is_correct !== "boolean"
+      ) {
+        return json({ error: "مقدار صحیح/غلط برای یکی از پاسخ‌ها نامعتبر است" }, 400);
+      }
+      if (
+        ans.time_taken !== undefined &&
+        ans.time_taken !== null &&
+        (typeof ans.time_taken !== "number" || !Number.isFinite(ans.time_taken) || ans.time_taken < 0)
+      ) {
+        return json({ error: "زمان صرف‌شده برای یکی از پاسخ‌ها نامعتبر است" }, 400);
+      }
     }
 
     await db.batch(
@@ -178,7 +213,8 @@ async function handleSaveAnswersBatch(request, env) {
     );
     return json({ ok: true, saved_count: answers_batch.length });
   } catch (err) {
-    return json({ error: "Database write failed", details: err.message }, 500);
+    console.error("handleSaveAnswersBatch failed:", err);
+    return json({ error: "ثبت پاسخ‌ها با خطا مواجه شد. لطفاً دوباره تلاش کنید." }, 500);
   }
 }
 
