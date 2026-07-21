@@ -1,0 +1,14 @@
+name = "majazi"
+main = "worker.js"
+compatibility_date = "2026-07-15"
+
+[assets]
+directory = "."
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[kv_namespaces]]
+binding = "KV"
+id = "72c23dba33b9423bb7233e77e2bc83ee"
+# trigger build
