@@ -8,7 +8,13 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/api/*"]
 
+# تنظیمات KV (برای ورود معلم و تنظیمات که نوشتن کمی دارند)
 [[kv_namespaces]]
 binding = "KV"
 id = "72c23dba33b9423bb7233e77e2bc83ee"
-# trigger build
+
+# تنظیمات D1 (برای ذخیره پاسخ‌های دانش‌آموزان که نوشتن زیادی دارند)
+[[d1_databases]]
+binding = "DB"
+database_name = "exam_db"
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
