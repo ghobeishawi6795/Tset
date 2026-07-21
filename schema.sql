@@ -1,4 +1,3 @@
--- جدول معلمان (برای اطمینان از سازگاری با سیستم فعلی)
 CREATE TABLE IF NOT EXISTS teachers (
   username TEXT PRIMARY KEY,
   password TEXT,
@@ -7,7 +6,6 @@ CREATE TABLE IF NOT EXISTS teachers (
   email TEXT
 );
 
--- جدول آزمون‌ها
 CREATE TABLE IF NOT EXISTS exams (
   id TEXT PRIMARY KEY,
   teacher_id TEXT,
@@ -17,7 +15,6 @@ CREATE TABLE IF NOT EXISTS exams (
   created_at TEXT
 );
 
--- جدول سوالات
 CREATE TABLE IF NOT EXISTS questions (
   id TEXT PRIMARY KEY,
   exam_id TEXT,
@@ -29,7 +26,6 @@ CREATE TABLE IF NOT EXISTS questions (
   section TEXT
 );
 
--- جدول پاسخ‌ها (مهم‌ترین بخش برای رفع محدودیت Write)
 CREATE TABLE IF NOT EXISTS answers (
   id TEXT PRIMARY KEY,
   student_id TEXT,
@@ -42,7 +38,5 @@ CREATE TABLE IF NOT EXISTS answers (
   answered_at TEXT
 );
 
--- ایندکس‌ها برای سرعت بالا در جستجو و گزارش‌گیری
 CREATE INDEX IF NOT EXISTS idx_answers_student ON answers(student_id);
 CREATE INDEX IF NOT EXISTS idx_answers_exam ON answers(exam_id);
-CREATE INDEX IF NOT EXISTS idx_answers_question ON answers(question_id);
