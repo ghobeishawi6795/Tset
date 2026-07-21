@@ -3,18 +3,16 @@
    © ghobeishawi - All rights reserved.
 ---------------------------------------------------------- */
 
-import { useState, useEffect } from 'react';
+function TakeExamScreen({ examId, studentId }) {
+  const [currentQuestionIndex, setCurrentQuestionIndex] = React.useState(0);
+  const [answers, setAnswers] = React.useState({});
+  const [timeRemaining, setTimeRemaining] = React.useState(0);
+  const [currentExam, setCurrentExam] = React.useState(null);
+  const [currentQuestions, setCurrentQuestions] = React.useState([]);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
 
-export function TakeExamScreen({ examId, studentId }) {
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState({});
-  const [timeRemaining, setTimeRemaining] = useState(0);
-  const [currentExam, setCurrentExam] = useState(null);
-  const [currentQuestions, setCurrentQuestions] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
+  React.useEffect(() => {
     async function loadData() {
       try {
         const examResponse = await fetch(`/api/kv?key=exam:${examId}`);
@@ -35,7 +33,7 @@ export function TakeExamScreen({ examId, studentId }) {
     loadData();
   }, [examId]);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (timeRemaining <= 0) {
       handleSubmit();
       return;
@@ -48,7 +46,7 @@ export function TakeExamScreen({ examId, studentId }) {
     return () => clearInterval(timer);
   }, [timeRemaining]);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (currentQuestions.length === 0) return;
     
     const interval = setInterval(() => {
@@ -95,46 +93,41 @@ export function TakeExamScreen({ examId, studentId }) {
     window.location.href = "/";
   };
 
-  if (isLoading) return <div>در حال بارگذاری آزمون...</div>;
-  if (error) return <div>خطا: {error}</div>;
-  if (currentQuestions.length === 0) return <div>سوالی یافت نشد!</div>;
+  if (isLoading) return React.createElement('div', null, 'در حال بارگذاری آزمون...');
+  if (error) return React.createElement('div', null, `خطا: ${error}`);
+  if (currentQuestions.length === 0) return React.createElement('div', null, 'سوالی یافت نشد!');
 
   const currentQuestion = currentQuestions[currentQuestionIndex];
   const options = typeof currentQuestion.options === "string" 
     ? JSON.parse(currentQuestion.options) 
     : currentQuestion.options;
 
-  return (
-    <div className="exam-container">
-      <div className="timer">زمان باقی‌مانده: {Math.floor(timeRemaining / 60)}:{(timeRemaining % 60).toString().padStart(2, '0')}</div>
-      
-      <div className="question-card">
-        <h3>سوال {currentQuestionIndex + 1} از {currentQuestions.length}</h3>
-        <p className="question-text">{currentQuestion.question_text}</p>
-        
-        <div className="options">
-          {options.map((option, index) => (
-            <div 
-              key={index}
-              className={`option ${answers[currentQuestion.id] === index ? 'selected' : ''}`}
-              onClick={() => handleAnswer(currentQuestion.id, index)}
-            >
-              {option}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="nav-buttons">
-        {currentQuestionIndex > 0 && (
-          <button onClick={() => setCurrentQuestionIndex(prev => prev - 1)}>قبلی</button>
-        )}
-        {currentQuestionIndex < currentQuestions.length - 1 ? (
-          <button onClick={() => setCurrentQuestionIndex(prev => prev + 1)}>بعدی</button>
-        ) : (
-          <button onClick={handleSubmit}>ثبت نهایی</button>
-        )}
-      </div>
-    </div>
+  return React.createElement('div', { className: 'exam-container' },
+    React.createElement('div', { className: 'timer' },
+      `زمان باقی‌مانده: ${Math.floor(timeRemaining / 60)}:${(timeRemaining % 60).toString().padStart(2, '0')}`
+    ),
+    React.createElement('div', { className: 'question-card' },
+      React.createElement('h3', null, `سوال ${currentQuestionIndex + 1} از ${currentQuestions.length}`),
+      React.createElement('p', { className: 'question-text' }, currentQuestion.question_text),
+      React.createElement('div', { className: 'options' },
+        options.map((option, index) => 
+          React.createElement('div', {
+            key: index,
+            className: `option ${answers[currentQuestion.id] === index ? 'selected' : ''}`,
+            onClick: () => handleAnswer(currentQuestion.id, index)
+          }, option)
+        )
+      )
+    ),
+    React.createElement('div', { className: 'nav-buttons' },
+      currentQuestionIndex > 0 && React.createElement('button', {
+        onClick: () => setCurrentQuestionIndex(prev => prev - 1)
+      }, 'قبلی'),
+      currentQuestionIndex < currentQuestions.length - 1 
+        ? React.createElement('button', {
+            onClick: () => setCurrentQuestionIndex(prev => prev + 1)
+          }, 'بعدی')
+        : React.createElement('button', { onClick: handleSubmit }, 'ثبت نهایی')
+    )
   );
-         }
+}
