@@ -1,7 +1,6 @@
-/* ---------------------------------------------------------
-   آزمون‌ساز معلم — Worker backend
-   © ghobeishawi - All rights reserved.
---------------------------------------------------------- */
+// ==========================================
+// توابع کمکی
+// ==========================================
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -9,10 +8,17 @@ function json(data, status = 200) {
   });
 }
 
+function uid() {
+  return Math.random().toString(36).substring(2, 10);
+}
+
 function getKV(env) {
   return env.KV || env.Kv || env.kv;
 }
 
+// ==========================================
+// مدیریت KV (برای معلمان و تنظیمات - بدون تغییر منطق شما)
+// ==========================================
 async function handleKV(request, env) {
   const kv = getKV(env);
   if (!kv) return json({ error: "KV binding missing" }, 500);
@@ -59,10 +65,6 @@ async function handleList(request, env) {
   return json({ keys });
 }
 
-function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
 async function handleForgotPassword(request, env) {
   const kv = getKV(env);
   if (!kv) return json({ error: "KV binding missing" }, 500);
@@ -102,17 +104,13 @@ async function handleForgotPassword(request, env) {
           from: env.RESEND_FROM || "onboarding@resend.dev",
           to: teacher.email,
           subject: "بازیابی رمز عبور - آزمون‌ساز معلم",
-          html: `<div dir="rtl" style="font-family:Tahoma,sans-serif">
-            <p>برای تنظیم رمز عبور جدید روی لینک زیر بزنید (تا ۱ ساعت معتبر است):</p>
-            <p><a href="${resetLink}">${resetLink}</a></p>
-          </div>`,
+          html: `<p>برای تنظیم رمز عبور جدید روی لینک زیر بزنید (تا ۱ ساعت معتبر است):</p><p><a href="${resetLink}">${resetLink}</a></p>`,
         }),
       });
     } catch (e) {
-      // Swallow email errors — token still works if the user has the link some other way.
+      // خطای ایمیل نادیده گرفته می‌شود
     }
   }
-
   return json({ ok: true });
 }
 
@@ -136,10 +134,89 @@ async function handleResetPassword(request, env) {
   return json({ ok: true });
 }
 
+// ==========================================
+// مدیریت D1 (جدید: برای ذخیره پاسخ‌های دانش‌آموزان)
+// ==========================================
+async function handleSaveAnswersBatch(request, env) {
+  const db = env.DB;
+  if (!db) return json({ error: "D1 binding missing. Please configure wrangler.toml" }, 500);
+
+  try {
+    const { student_id, exam_id, answers_batch } = await request.json();
+    if (!student_id || !exam_id || !Array.isArray(answers_batch)) {
+      return json({ error: "Invalid payload: student_id, exam_id, and answers_batch are required" }, 400);
+    }
+
+    // استفاده از db.batch برای ذخیره فوق‌سریع و کاهش درخواست‌ها
+    await db.batch(
+      answers_batch.map((ans) =>
+        db.prepare(`
+          INSERT INTO answers (id, student_id, exam_id, question_id, selected_option, awarded_mark, is_correct, time_taken, answered_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            selected_option = excluded.selected_option,
+            awarded_mark = excluded.awarded_mark,
+            is_correct = excluded.is_correct,
+            time_taken = excluded.time_taken,
+            answered_at = excluded.answered_at
+        `).bind(
+          ans.id || `${student_id}_${exam_id}_${ans.question_id}_${Date.now()}`,
+          student_id,
+          exam_id,
+          ans.question_id,
+          ans.selected_option || null,
+          ans.awarded_mark || null,
+          ans.is_correct === true ? 1 : (ans.is_correct === false ? 0 : null),
+          ans.time_taken || 0,
+          ans.answered_at || new Date().toISOString()
+        )
+      )
+    );
+    return json({ ok: true, saved_count: answers_batch.length });
+  } catch (err) {
+    return json({ error: "Database write failed", details: err.message }, 500);
+  }
+}
+
+async function handleGetAnswers(request, env) {
+  const db = env.DB;
+  if (!db) return json({ error: "D1 binding missing" }, 500);
+  
+  const url = new URL(request.url);
+  const student_id = url.searchParams.get("student_id");
+  const exam_id = url.searchParams.get("exam_id");
+
+  if (!student_id || !exam_id) {
+    return json({ error: "student_id and exam_id are required" }, 400);
+  }
+
+  try {
+    const { results } = await db.prepare(`
+      SELECT * FROM answers WHERE student_id = ? AND exam_id = ?
+    `).bind(student_id, exam_id).all();
+    
+    return json({ ok: true, answers: results });
+  } catch (err) {
+    return json({ error: "Database read failed", details: err.message }, 500);
+  }
+}
+
+// ==========================================
+// نقطه ورود اصلی (Router)
+// ==========================================
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // مسیرهای جدید D1 (برای پاسخ‌های دانش‌آموزان)
+    if (url.pathname === "/api/answers/batch" && request.method === "POST") {
+      return handleSaveAnswersBatch(request, env);
+    }
+    if (url.pathname === "/api/answers" && request.method === "GET") {
+      return handleGetAnswers(request, env);
+    }
+
+    // مسیرهای قدیمی KV (برای حفظ سازگاری سیستم ورود شما)
     if (url.pathname === "/api/kv") return handleKV(request, env);
     if (url.pathname === "/api/list") return handleList(request, env);
     if (url.pathname === "/api/forgot-password" && request.method === "POST") return handleForgotPassword(request, env);
