@@ -17,7 +17,7 @@ function getKV(env) {
 }
 
 // ==========================================
-// مدیریت KV (برای معلمان و تنظیمات - بدون تغییر منطق شما)
+// مدیریت KV (برای معلمان و تنظیمات)
 // ==========================================
 async function handleKV(request, env) {
   const kv = getKV(env);
@@ -135,19 +135,18 @@ async function handleResetPassword(request, env) {
 }
 
 // ==========================================
-// مدیریت D1 (جدید: برای ذخیره پاسخ‌های دانش‌آموزان)
+// مدیریت D1 (ذخیره پاسخ‌های دانش‌آموزان)
 // ==========================================
 async function handleSaveAnswersBatch(request, env) {
   const db = env.DB;
-  if (!db) return json({ error: "D1 binding missing. Please configure wrangler.toml" }, 500);
+  if (!db) return json({ error: "D1 binding missing" }, 500);
 
   try {
     const { student_id, exam_id, answers_batch } = await request.json();
     if (!student_id || !exam_id || !Array.isArray(answers_batch)) {
-      return json({ error: "Invalid payload: student_id, exam_id, and answers_batch are required" }, 400);
+      return json({ error: "Invalid payload" }, 400);
     }
 
-    // استفاده از db.batch برای ذخیره فوق‌سریع و کاهش درخواست‌ها
     await db.batch(
       answers_batch.map((ans) =>
         db.prepare(`
@@ -208,7 +207,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // مسیرهای جدید D1 (برای پاسخ‌های دانش‌آموزان)
+    // مسیرهای جدید D1
     if (url.pathname === "/api/answers/batch" && request.method === "POST") {
       return handleSaveAnswersBatch(request, env);
     }
@@ -216,7 +215,7 @@ export default {
       return handleGetAnswers(request, env);
     }
 
-    // مسیرهای قدیمی KV (برای حفظ سازگاری سیستم ورود شما)
+    // مسیرهای قدیمی KV
     if (url.pathname === "/api/kv") return handleKV(request, env);
     if (url.pathname === "/api/list") return handleList(request, env);
     if (url.pathname === "/api/forgot-password" && request.method === "POST") return handleForgotPassword(request, env);
