@@ -74,21 +74,14 @@ async function handleList(request, env) {
 async function handleForgotPassword(request, env) {
   const kv = getKV(env);
   if (!kv) return json({ error: "KV binding missing" }, 500);
-  const { email } = await request.json();
-  if (!email) return json({ error: "email required" }, 400);
+  const { username } = await request.json();
+  const uname = (username || "").trim();
+  if (!uname) return json({ ok: true }); // پاسخ عمومی، حتی برای ورودی خالی
 
-  const teacherKeys = await kv.list({ prefix: "teacher:" });
-  let teacher = null;
-  for (const k of teacherKeys.keys) {
-    const raw = await kv.get(k.name);
-    if (!raw) continue;
-    const t = JSON.parse(raw);
-    if ((t.email || "").toLowerCase() === email.trim().toLowerCase()) {
-      teacher = t;
-      break;
-    }
-  }
-  if (!teacher) return json({ ok: true });
+  const raw = await kv.get(`teacher:${uname}`);
+  const teacher = raw ? JSON.parse(raw) : null;
+  // همیشه پاسخ یکسان (ok:true) برمی‌گردونیم تا نشه فهمید کدوم نام کاربری ثبت شده
+  if (!teacher || !teacher.email) return json({ ok: true });
 
   const token = uid() + uid();
   await kv.put(`resettoken:${token}`, JSON.stringify({ username: teacher.username }), {
@@ -144,6 +137,110 @@ async function handleResetPassword(request, env) {
   await kv.delete(`resettoken:${token}`);
 
   return json({ ok: true });
+}
+
+// ==========================================
+// جلسه‌ی امتحان دانش‌آموز — بدون افشای پاسخ صحیح
+// ==========================================
+// برخلاف /api/kv و /api/list (که هر کلیدی رو خام برمی‌گردونن)، این اندپوینت
+// مخصوص لینک آزمون دانش‌آموزه: فقط داده‌ی لازم برای همون آزمون رو برمی‌گردونه
+// و فیلدهای پاسخ صحیح (correct_answer / correct_answers) رو قبل از ارسال حذف می‌کنه.
+async function handleExamSession(request, env) {
+  const kv = getKV(env);
+  if (!kv) return json({ error: "KV binding missing" }, 500);
+  const url = new URL(request.url);
+  const examId = url.searchParams.get("examId");
+  if (!examId) return json({ error: "examId required" }, 400);
+
+  const examRaw = await kv.get(`exam:${examId}`);
+  if (!examRaw) return json({ error: "exam not found" }, 404);
+  const exam = JSON.parse(examRaw);
+
+  const [qKeys, rosterKeys, classKeys] = await Promise.all([
+    kv.list({ prefix: "question:" }),
+    kv.list({ prefix: "roster:" }),
+    kv.list({ prefix: "class:" }),
+  ]);
+
+  const allQuestions = (await Promise.all(qKeys.keys.map((k) => kv.get(k.name))))
+    .filter(Boolean).map((r) => JSON.parse(r));
+  const questions = allQuestions
+    .filter((q) => q.exam_id === examId)
+    .map(({ correct_answer, correct_answers, ...safe }) => safe); // حذف پاسخ صحیح
+
+  const allRoster = (await Promise.all(rosterKeys.keys.map((k) => kv.get(k.name))))
+    .filter(Boolean).map((r) => JSON.parse(r));
+  const roster = allRoster.filter((r) => r.teacher_id === exam.teacher_id);
+
+  const allClasses = (await Promise.all(classKeys.keys.map((k) => kv.get(k.name))))
+    .filter(Boolean).map((r) => JSON.parse(r));
+  const classes = allClasses.filter((c) => c.teacher_id === exam.teacher_id);
+
+  return json({ exam, questions, roster, classes });
+}
+
+// ذخیره‌ی نهایی پاسخ‌ها — نمره‌دهی سؤالات تستی همیشه سمت سرور محاسبه می‌شه،
+// نه با اعتماد به مقادیر is_correct/awarded_mark ارسالی از کلاینت.
+async function handleSubmitAnswers(request, env) {
+  const kv = getKV(env);
+  if (!kv) return json({ error: "KV binding missing" }, 500);
+  const { student_id, student, exam_id, answers } = await request.json();
+  if (!student_id || !exam_id || !Array.isArray(answers)) {
+    return json({ error: "اطلاعات ارسالی معتبر نیست" }, 400);
+  }
+
+  const examRaw = await kv.get(`exam:${exam_id}`);
+  if (!examRaw) return json({ error: "exam not found" }, 404);
+  const exam = JSON.parse(examRaw);
+
+  const qKeys = await kv.list({ prefix: "question:" });
+  const allQuestions = (await Promise.all(qKeys.keys.map((k) => kv.get(k.name))))
+    .filter(Boolean).map((r) => JSON.parse(r));
+  const qMap = new Map(allQuestions.filter((q) => q.exam_id === exam_id).map((q) => [q.id, q]));
+
+  let correctCount = 0;
+  let pendingEssays = 0;
+  const graded = answers.map((a) => {
+    const q = qMap.get(a.question_id);
+    if (!q) return null; // سوال نامعتبر/متعلق به آزمون دیگر — نادیده گرفته می‌شود
+    const base = {
+      id: uid(), student_id, exam_id, question_id: q.id,
+      selected_option: a.selected_option, mark: q.mark,
+      time_taken: a.time_taken || null, answered_at: new Date().toISOString(),
+    };
+    if (q.type === "essay") {
+      if (a.selected_option) pendingEssays++;
+      return { ...base, is_correct: null, awarded_mark: null };
+    }
+    if (q.type === "mc_multi") {
+      const selArr = Array.isArray(a.selected_option) ? [...a.selected_option].sort()
+        : String(a.selected_option || "").split(",").filter(Boolean).sort();
+      const correctArr = [...(q.correct_answers || [])].sort();
+      const isCorrect = selArr.length > 0 && selArr.length === correctArr.length && selArr.every((v, i) => v === correctArr[i]);
+      if (isCorrect) correctCount++;
+      return { ...base, selected_option: selArr.join(","), is_correct: isCorrect };
+    }
+    const isCorrect = a.selected_option === q.correct_answer;
+    if (isCorrect) correctCount++;
+    return { ...base, is_correct: isCorrect };
+  }).filter(Boolean);
+
+  if (student) {
+    await kv.put(`student:${student_id}`, JSON.stringify({ ...student, id: student_id }));
+  }
+  await kv.put(`answers:${student_id}`, JSON.stringify(graded));
+
+  const totalQuestions = qMap.size;
+  const totalMarks = [...qMap.values()].reduce((s, q) => s + (q.mark || 0), 0);
+  const gotMarks = graded.reduce((s, a) => s + (a.is_correct ? a.mark : 0), 0);
+  const pct = totalMarks ? Math.round((gotMarks / totalMarks) * 1000) / 10 : 0;
+
+  return json({
+    ok: true,
+    correctCount, total: totalQuestions, pct, pendingEssays,
+    // پاسخ‌های صحیح فقط وقتی برگردونده می‌شن که خود معلم گزینه‌ی «نمایش پاسخ‌ها» رو فعال کرده باشه
+    reveal: exam.show_answers ? graded.map((a) => ({ ...a, correct_answer: qMap.get(a.question_id)?.correct_answer, correct_answers: qMap.get(a.question_id)?.correct_answers })) : null,
+  });
 }
 
 // ==========================================
@@ -249,6 +346,8 @@ export default {
     const url = new URL(request.url);
 
     // مسیرهای جدید D1
+    if (url.pathname === "/api/exam-session" && request.method === "GET") return handleExamSession(request, env);
+    if (url.pathname === "/api/answers/submit" && request.method === "POST") return handleSubmitAnswers(request, env);
     if (url.pathname === "/api/answers/batch" && request.method === "POST") {
       return handleSaveAnswersBatch(request, env);
     }
