@@ -39,16 +39,13 @@ function TakeExamScreen({ exam, questions, roster = [], classes = [], onFinish, 
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   const [finishMessages, setFinishMessages] = useState(DEFAULT_FINISH_MESSAGES);
 
-  // Load the teacher's custom end-of-exam messages (set in Settings), if any.
+  // The teacher's custom end-of-exam messages (set in Settings), if any —
+  // included directly on the exam object by /api/exam-session.
   useEffect(() => {
-    getJSON(`teacher:${exam.teacher_id}`)
-      .then((t) => {
-        if (t && Array.isArray(t.finish_messages) && t.finish_messages.length > 0) {
-          setFinishMessages(t.finish_messages);
-        }
-      })
-      .catch(() => {});
-  }, []);
+    if (Array.isArray(exam.finish_messages) && exam.finish_messages.length > 0) {
+      setFinishMessages(exam.finish_messages);
+    }
+  }, [exam]);
 
   const orderedQuestions = qOrder
     ? qOrder.map((id) => examQuestions.find((q) => q.id === id)).filter(Boolean)
@@ -112,12 +109,11 @@ function TakeExamScreen({ exam, questions, roster = [], classes = [], onFinish, 
     const nameNorm = resolvedName;
     setStudentName(resolvedName);
     setClassCode(resolvedClass);
-    const allStudents = await loadAll("student:");
-    const allAnswers = (await loadAll("answers:")).flat().filter(Boolean);
-    const already = allStudents.some((s) =>
-      s.teacher_id === exam.teacher_id && s.fullname === nameNorm &&
-      allAnswers.some((a) => a.student_id === s.id && a.exam_id === exam.id)
-    );
+    let already = false;
+    try {
+      const r = await fetch(`/api/exam-attempted?examId=${encodeURIComponent(exam.id)}&name=${encodeURIComponent(nameNorm)}`);
+      if (r.ok) { const d = await r.json(); already = !!d.already; }
+    } catch { /* if the check fails, fall through and let them attempt — better than blocking a legit student */ }
     if (already && !exam.allow_retake) {
       setChecking(false);
       setEnterError("شما قبلاً در این آزمون شرکت کرده‌اید.");
@@ -256,16 +252,12 @@ function TakeExamScreen({ exam, questions, roster = [], classes = [], onFinish, 
         const r = await fetch("/api/answers/submit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ student_id: studentId, student: studentRecord, exam_id: exam.id, answers: rawAnswers }),
+          body: JSON.stringify({ student_id: studentId, student: studentRecord, exam_id: exam.id, answers: rawAnswers, cheat_alert: cheatAlert }),
         });
         if (r.ok) {
           summary = await r.json();
-          let alertOk = true;
-          if (cheatAlert) alertOk = await setJSON(`cheatalert:${cheatAlert.id}`, cheatAlert);
-          if (alertOk) {
-            await deleteKey(draftKey);
-            synced = true;
-          }
+          await deleteKey(draftKey);
+          synced = true;
         }
       } catch {
         synced = false;

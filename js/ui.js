@@ -192,10 +192,10 @@ async function flushOfflineQueue() {
           answers: sub.answerRecords.map((a) => ({
             question_id: a.question_id, selected_option: a.selected_option, time_taken: a.time_taken,
           })),
+          cheat_alert: sub.cheatAlert,
         }),
       });
-      let ok = r.ok;
-      if (ok && sub.cheatAlert) ok = await setJSON(`cheatalert:${sub.cheatAlert.id}`, sub.cheatAlert);
+      const ok = r.ok;
       if (ok) {
         if (sub.draftKeyToDelete) await deleteKey(sub.draftKeyToDelete);
         syncedCount++;

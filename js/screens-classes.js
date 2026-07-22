@@ -585,7 +585,7 @@ function SettingsScreen({ teacher, onUpdate, refresh, exams, students }) {
     if (newPw !== newPw2) { setPwError("رمز عبور جدید و تکرار آن یکسان نیستند."); return; }
     const updated = { ...teacher, password: await hashPassword(newPw) };
     await setJSON(`teacher:${teacher.username}`, updated);
-    saveSession(updated.username, updated.password);
+    saveSession(updated.username, updated.password, getAuthToken());
     onUpdate(updated);
     setCurPw(""); setNewPw(""); setNewPw2("");
     setPwSaved(true);

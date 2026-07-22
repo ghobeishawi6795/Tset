@@ -140,7 +140,7 @@ function AdminProfileModal({ teacher, onSaved, onClose }) {
     setPwLoading(true);
     const updated = { ...teacher, password: await hashPassword(newPw) };
     await setJSON(`teacher:${teacher.username}`, updated);
-    saveSession(updated.username, updated.password);
+    saveSession(updated.username, updated.password, getAuthToken());
     setPwLoading(false);
     setCurPw(""); setNewPw(""); setNewPw2("");
     setPwSaved(true);

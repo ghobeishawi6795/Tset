@@ -303,7 +303,7 @@ function EduExamApp() {
         messages={messages}
         cheatAlerts={cheatAlerts}
         onLogout={() => { performLogout(); setTeacher(null); setView("dashboard"); }}
-        onUpdateSelf={(updated) => { setTeacher(updated); saveSession(updated.username, updated.password); }}
+        onUpdateSelf={(updated) => { setTeacher(updated); saveSession(updated.username, updated.password, getAuthToken()); }}
         refresh={refresh}
       />
     );
