@@ -67,7 +67,7 @@ function ResetPasswordScreen({ token, onDone }) {
   const submit = async () => {
     setError("");
     if (!password || !confirm) { setError("هر دو فیلد را پر کنید."); return; }
-    if (password.length < 4) { setError("رمز عبور باید حداقل ۴ کاراکتر باشد."); return; }
+    if (password.length < 8) { setError("رمز عبور باید حداقل ۸ کاراکتر باشد."); return; }
     if (password !== confirm) { setError("رمز عبور و تکرار آن یکسان نیستند."); return; }
     setLoading(true);
     try {
@@ -137,6 +137,7 @@ function LoginScreen({ onLogin, goRegister, allowRegister, goForgot, portalMode,
     if (!username || !password) { setError("نام کاربری و رمز عبور را وارد کنید."); return; }
     setLoading(true);
     let teacher = null;
+    let errMsg = "";
     try {
       const passwordHash = await hashPassword(password);
       const r = await fetch("/api/login", {
@@ -144,15 +145,17 @@ function LoginScreen({ onLogin, goRegister, allowRegister, goForgot, portalMode,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, passwordHash }),
       });
+      const data = await r.json().catch(() => ({}));
       if (r.ok) {
-        const data = await r.json();
         teacher = data.teacher;
         saveSession(teacher.username, teacher.password, data.token);
+      } else {
+        errMsg = data.error || "";
       }
     } catch { /* handled by teacher===null below */ }
     setLoading(false);
     if (!teacher) {
-      setError("نام کاربری یا رمز عبور اشتباه است.");
+      setError(errMsg || "نام کاربری یا رمز عبور اشتباه است.");
       return;
     }
     onLogin(teacher);
@@ -231,6 +234,7 @@ function RegisterScreen({ onRegistered, goLogin }) {
   const submit = async () => {
     setError("");
     if (!fullname || !username || !password || !email) { setError("همه فیلدها را پر کنید."); return; }
+    if (password.length < 8) { setError("رمز عبور باید حداقل ۸ کاراکتر باشد."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("ایمیل معتبر نیست."); return; }
     setLoading(true);
     let teacher = null;

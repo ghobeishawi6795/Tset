@@ -14,7 +14,7 @@ function CreateTeacherForm({ onCreated, existingUsernames }) {
     setError("");
     if (!fullname || !username || !password || !email) { setError("همه فیلدها را پر کنید."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("ایمیل معتبر نیست."); return; }
-    if (password.length < 4) { setError("رمز عبور باید حداقل ۴ کاراکتر باشد."); return; }
+    if (password.length < 8) { setError("رمز عبور باید حداقل ۸ کاراکتر باشد."); return; }
     if (existingUsernames.includes(username.trim())) { setError("این نام کاربری قبلاً استفاده شده است."); return; }
     setLoading(true);
     const existing = await getJSON(`teacher:${username}`);
@@ -71,7 +71,7 @@ function EditTeacherForm({ teacher, onSaved }) {
     setError(""); setSaved(false);
     if (!fullname || !email) { setError("نام و ایمیل نباید خالی باشند."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("ایمیل معتبر نیست."); return; }
-    if (newPassword && newPassword.length < 4) { setError("رمز عبور جدید باید حداقل ۴ کاراکتر باشد."); return; }
+    if (newPassword && newPassword.length < 8) { setError("رمز عبور جدید باید حداقل ۸ کاراکتر باشد."); return; }
     setLoading(true);
     const updated = { ...teacher, fullname: fullname.trim(), email: email.trim() };
     if (newPassword) updated.password = await hashPassword(newPassword);
@@ -135,7 +135,7 @@ function AdminProfileModal({ teacher, onSaved, onClose }) {
     setPwError(""); setPwSaved(false);
     if (!curPw || !newPw || !newPw2) { setPwError("همه فیلدها را پر کنید."); return; }
     if (!(await verifyPassword(teacher.password, curPw))) { setPwError("رمز عبور فعلی اشتباه است."); return; }
-    if (newPw.length < 4) { setPwError("رمز عبور جدید باید حداقل ۴ کاراکتر باشد."); return; }
+    if (newPw.length < 8) { setPwError("رمز عبور جدید باید حداقل ۸ کاراکتر باشد."); return; }
     if (newPw !== newPw2) { setPwError("رمز عبور جدید و تکرار آن یکسان نیستند."); return; }
     setPwLoading(true);
     const updated = { ...teacher, password: await hashPassword(newPw) };

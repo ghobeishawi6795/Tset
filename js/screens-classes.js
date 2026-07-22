@@ -581,7 +581,7 @@ function SettingsScreen({ teacher, onUpdate, refresh, exams, students }) {
     setPwError(""); setPwSaved(false);
     if (!curPw || !newPw || !newPw2) { setPwError("همه فیلدها را پر کنید."); return; }
     if (!(await verifyPassword(teacher.password, curPw))) { setPwError("رمز عبور فعلی اشتباه است."); return; }
-    if (newPw.length < 4) { setPwError("رمز عبور جدید باید حداقل ۴ کاراکتر باشد."); return; }
+    if (newPw.length < 8) { setPwError("رمز عبور جدید باید حداقل ۸ کاراکتر باشد."); return; }
     if (newPw !== newPw2) { setPwError("رمز عبور جدید و تکرار آن یکسان نیستند."); return; }
     const updated = { ...teacher, password: await hashPassword(newPw) };
     await setJSON(`teacher:${teacher.username}`, updated);
