@@ -24,7 +24,7 @@ function getKV(env) {
 
 // کلیدهایی که فقط داخلی هستن و هیچ‌وقت نباید از طریق KV عمومی خونده/نوشته بشن،
 // حتی برای یک کاربر لاگین‌کرده
-const INTERNAL_ONLY_PREFIXES = ["session:", "resettoken:"];
+const INTERNAL_ONLY_PREFIXES = ["session:", "resettoken:", "loginfail:"];
 function isInternalKey(key) {
   return INTERNAL_ONLY_PREFIXES.some((p) => key.startsWith(p));
 }
@@ -261,17 +261,31 @@ async function handleRegister(request, env) {
   return json({ ok: true, token, teacher });
 }
 
+// بعد از چند تلاش ناموفق پشت سر هم برای یک نام کاربری، ورود رو برای چند
+// دقیقه قفل می‌کنه — جلوی حدس زدن نامحدود رمز عبور رو می‌گیره.
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_SECONDS = 10 * 60;
+
 async function handleLogin(request, env) {
   const kv = getKV(env);
   if (!kv) return json({ error: "KV binding missing" }, 500);
   const { username, passwordHash } = await request.json();
   if (!username || !passwordHash) return json({ error: "نام کاربری و رمز عبور لازم است" }, 400);
 
+  const failKey = `loginfail:${username}`;
+  const failRaw = await kv.get(failKey);
+  const fail = failRaw ? JSON.parse(failRaw) : { count: 0 };
+  if (fail.count >= LOGIN_MAX_ATTEMPTS) {
+    return json({ error: "به‌دلیل تلاش‌های ناموفق زیاد، چند دقیقه صبر کنید و دوباره امتحان کنید." }, 429);
+  }
+
   const raw = await kv.get(`teacher:${username}`);
   const teacher = raw ? JSON.parse(raw) : null;
   if (!teacher || teacher.password !== passwordHash) {
+    await kv.put(failKey, JSON.stringify({ count: fail.count + 1 }), { expirationTtl: LOGIN_LOCKOUT_SECONDS });
     return json({ error: "نام کاربری یا رمز عبور اشتباه است" }, 401);
   }
+  await kv.delete(failKey);
   const token = uid() + uid() + uid();
   await kv.put(`session:${token}`, JSON.stringify({ username: teacher.username, role: teacher.role || "teacher" }), { expirationTtl: 60 * 60 * 24 * 30 });
   return json({ ok: true, token, teacher });
@@ -531,108 +545,12 @@ async function handleSubmitAnswers(request, env) {
 }
 
 // ==========================================
-// مدیریت D1 (ذخیره پاسخ‌های دانش‌آموزان)
-// ==========================================
-async function handleSaveAnswersBatch(request, env) {
-  const db = env.DB;
-  if (!db) return json({ error: "D1 binding missing" }, 500);
-
-  try {
-    const { student_id, exam_id, answers_batch } = await request.json();
-    if (!student_id || !exam_id || !Array.isArray(answers_batch)) {
-      return json({ error: "اطلاعات ارسالی معتبر نیست" }, 400);
-    }
-
-    // اعتبارسنجی هر آیتم قبل از نوشتن در دیتابیس
-    for (const ans of answers_batch) {
-      if (!ans || typeof ans !== "object" || !ans.question_id) {
-        return json({ error: "شناسه سوال برای یکی از پاسخ‌ها وجود ندارد" }, 400);
-      }
-      if (
-        ans.awarded_mark !== undefined &&
-        ans.awarded_mark !== null &&
-        (typeof ans.awarded_mark !== "number" || !Number.isFinite(ans.awarded_mark) || ans.awarded_mark < 0)
-      ) {
-        return json({ error: "نمره ثبت‌شده برای یکی از پاسخ‌ها نامعتبر است" }, 400);
-      }
-      if (
-        ans.is_correct !== undefined &&
-        ans.is_correct !== null &&
-        typeof ans.is_correct !== "boolean"
-      ) {
-        return json({ error: "مقدار صحیح/غلط برای یکی از پاسخ‌ها نامعتبر است" }, 400);
-      }
-      if (
-        ans.time_taken !== undefined &&
-        ans.time_taken !== null &&
-        (typeof ans.time_taken !== "number" || !Number.isFinite(ans.time_taken) || ans.time_taken < 0)
-      ) {
-        return json({ error: "زمان صرف‌شده برای یکی از پاسخ‌ها نامعتبر است" }, 400);
-      }
-    }
-
-    await db.batch(
-      answers_batch.map((ans) =>
-        db.prepare(`
-          INSERT INTO answers (id, student_id, exam_id, question_id, selected_option, awarded_mark, is_correct, time_taken, answered_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            selected_option = excluded.selected_option,
-            awarded_mark = excluded.awarded_mark,
-            is_correct = excluded.is_correct,
-            time_taken = excluded.time_taken,
-            answered_at = excluded.answered_at
-        `).bind(
-          ans.id || `${student_id}_${exam_id}_${ans.question_id}_${Date.now()}`,
-          student_id,
-          exam_id,
-          ans.question_id,
-          ans.selected_option || null,
-          ans.awarded_mark || null,
-          ans.is_correct === true ? 1 : (ans.is_correct === false ? 0 : null),
-          ans.time_taken || 0,
-          ans.answered_at || new Date().toISOString()
-        )
-      )
-    );
-    return json({ ok: true, saved_count: answers_batch.length });
-  } catch (err) {
-    console.error("handleSaveAnswersBatch failed:", err);
-    return json({ error: "ثبت پاسخ‌ها با خطا مواجه شد. لطفاً دوباره تلاش کنید." }, 500);
-  }
-}
-
-async function handleGetAnswers(request, env) {
-  const db = env.DB;
-  if (!db) return json({ error: "D1 binding missing" }, 500);
-  
-  const url = new URL(request.url);
-  const student_id = url.searchParams.get("student_id");
-  const exam_id = url.searchParams.get("exam_id");
-
-  if (!student_id || !exam_id) {
-    return json({ error: "student_id and exam_id are required" }, 400);
-  }
-
-  try {
-    const { results } = await db.prepare(`
-      SELECT * FROM answers WHERE student_id = ? AND exam_id = ?
-    `).bind(student_id, exam_id).all();
-    
-    return json({ ok: true, answers: results });
-  } catch (err) {
-    return json({ error: "Database read failed", details: err.message }, 500);
-  }
-}
-
-// ==========================================
 // نقطه ورود اصلی (Router)
 // ==========================================
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // مسیرهای جدید D1
     if (url.pathname === "/api/exam-attempted" && request.method === "GET") return handleExamAttempted(request, env);
     if (url.pathname === "/api/teacher-exists" && request.method === "GET") return handleTeacherExists(request, env);
     if (url.pathname === "/api/register" && request.method === "POST") return handleRegister(request, env);
@@ -641,12 +559,6 @@ export default {
     if (url.pathname === "/api/student-lookup" && request.method === "GET") return handleStudentLookup(request, env);
     if (url.pathname === "/api/exam-session" && request.method === "GET") return handleExamSession(request, env);
     if (url.pathname === "/api/answers/submit" && request.method === "POST") return handleSubmitAnswers(request, env);
-    if (url.pathname === "/api/answers/batch" && request.method === "POST") {
-      return handleSaveAnswersBatch(request, env);
-    }
-    if (url.pathname === "/api/answers" && request.method === "GET") {
-      return handleGetAnswers(request, env);
-    }
 
     // مسیرهای قدیمی KV
     if (url.pathname === "/api/kv") return handleKV(request, env);
