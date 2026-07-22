@@ -99,9 +99,9 @@ function EduExamApp() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const [ex, qs, st, answerBatches, cl, ro, msg, teacherKeys, alerts, allTeachers] = await Promise.all([
+    const [ex, qs, st, answerBatches, cl, ro, msg, alerts, allTeachers] = await Promise.all([
       loadAll("exam:"), loadAll("question:"), loadAll("student:"), loadAll("answers:"),
-      loadAll("class:"), loadAll("roster:"), loadAll("message:"), listPrefix("teacher:"), loadAll("cheatalert:"),
+      loadAll("class:"), loadAll("roster:"), loadAll("message:"), loadAll("cheatalert:"),
       loadAll("teacher:"),
     ]);
     // Each "answers:<studentId>" key holds a whole exam attempt's worth of
@@ -113,7 +113,6 @@ function EduExamApp() {
     setRoster(sortByFa(ro, (r) => r.fullname));
     setMessages(msg);
     setCheatAlerts(alerts);
-    setTeacherExists(teacherKeys.length > 0);
     setTeachers(allTeachers);
   }, []);
 
@@ -141,12 +140,30 @@ function EduExamApp() {
     (async () => {
       if (studentExamId) {
         await loadStudentSession(studentExamId);
-      } else {
-        await refresh();
+        setReady(true);
+        return;
       }
+      // Whether a teacher account exists yet decides whether the login screen
+      // offers "register" — this has to work before anyone is logged in, so
+      // it's a small dedicated public endpoint rather than the authenticated
+      // refresh() below.
+      try {
+        const r = await fetch("/api/teacher-exists");
+        if (r.ok) {
+          const d = await r.json();
+          setTeacherExists(!!d.exists);
+        }
+      } catch { /* ignore — defaults to false, register screen offered */ }
       setReady(true);
     })();
-  }, [refresh, loadStudentSession, studentExamId]);
+  }, [studentExamId, loadStudentSession]);
+
+  // Load the full authenticated dataset once a teacher is actually logged in
+  // (fresh login, or a restored session) — never before, since /api/kv and
+  // /api/list now require a valid session token.
+  useEffect(() => {
+    if (teacher && !studentExamId) refresh();
+  }, [teacher, studentExamId, refresh]);
 
   // Auto-sync any exam submissions that were queued locally because the
   // student had no internet connection at the time. Retried whenever the
@@ -157,7 +174,7 @@ function EduExamApp() {
       const synced = await flushOfflineQueue();
       if (synced > 0) {
         if (studentExamId) loadStudentSession(studentExamId);
-        else refresh();
+        else if (teacher) refresh();
       }
     };
     trySync();
@@ -167,7 +184,7 @@ function EduExamApp() {
       window.removeEventListener("online", trySync);
       clearInterval(interval);
     };
-  }, [refresh, studentExamId, loadStudentSession]);
+  }, [refresh, studentExamId, loadStudentSession, teacher]);
 
   // Optimistic local-state helpers for classes/roster — KV's list endpoint
   // is only eventually consistent, so a just-written/deleted key can take
@@ -285,7 +302,7 @@ function EduExamApp() {
         answers={answers}
         messages={messages}
         cheatAlerts={cheatAlerts}
-        onLogout={() => { clearSession(); setTeacher(null); setView("dashboard"); }}
+        onLogout={() => { performLogout(); setTeacher(null); setView("dashboard"); }}
         onUpdateSelf={(updated) => { setTeacher(updated); saveSession(updated.username, updated.password); }}
         refresh={refresh}
       />
@@ -362,7 +379,7 @@ function EduExamApp() {
       <Sidebar
         active={view}
         onNavigate={(v) => { setView(v); setActiveExamId(null); setActiveClassId(null); }}
-        onLogout={() => { clearSession(); setTeacher(null); setView("dashboard"); }}
+        onLogout={() => { performLogout(); setTeacher(null); setView("dashboard"); }}
         teacherName={teacher.fullname}
       />
       <div style={{ flex: 1, background: "#F8FAFC", minHeight: "100vh" }}>

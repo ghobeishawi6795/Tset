@@ -46,10 +46,10 @@ async function verifyPassword(storedPassword, entered) {
 --------------------------------------------------------- */
 const SESSION_KEY = "eduexam_session";
 const SESSION_DAYS = 30;
-function saveSession(username, passwordHash) {
+function saveSession(username, passwordHash, token) {
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify({
-      username, passwordHash, expires_at: Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000,
+      username, passwordHash, token, expires_at: Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000,
     }));
   } catch { /* localStorage unavailable — session just won't persist */ }
 }
@@ -67,10 +67,30 @@ function loadSession() {
 function clearSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
 }
+// Revokes the session token on the server (so it can't be reused even if
+// someone got hold of it) and then clears the local copy.
+async function performLogout() {
+  const token = getAuthToken();
+  try {
+    if (token) await fetch("/api/logout", { method: "POST", headers: authHeaders() });
+  } catch { /* best-effort — clear locally regardless */ }
+  clearSession();
+}
+// The token issued by /api/login or /api/register — sent as a Bearer header
+// on every KV/list request so the server can tell who's asking (and refuse
+// anyone who isn't). Without this, /api/kv and /api/list would have to be
+// left open to anyone on the internet, which is exactly the hole we're closing.
+function getAuthToken() {
+  return loadSession()?.token || null;
+}
+function authHeaders(extra) {
+  const token = getAuthToken();
+  return { ...(extra || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
 
 async function getJSON(key) {
   try {
-    const r = await fetch(`/api/kv?key=${encodeURIComponent(key)}`);
+    const r = await fetch(`/api/kv?key=${encodeURIComponent(key)}`, { headers: authHeaders() });
     if (r.status === 404) return null;
     if (!r.ok) return null;
     const data = await r.json();
@@ -84,7 +104,7 @@ async function setJSON(key, value) {
   try {
     const r = await fetch("/api/kv", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ k: key, v: value }),
     });
     return r.ok;
@@ -95,7 +115,7 @@ async function setJSON(key, value) {
 
 async function deleteKey(key) {
   try {
-    await fetch(`/api/kv?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+    await fetch(`/api/kv?key=${encodeURIComponent(key)}`, { method: "DELETE", headers: authHeaders() });
   } catch {
     /* ignore */
   }
@@ -103,7 +123,7 @@ async function deleteKey(key) {
 
 async function listPrefix(prefix) {
   try {
-    const r = await fetch(`/api/list?prefix=${encodeURIComponent(prefix)}`);
+    const r = await fetch(`/api/list?prefix=${encodeURIComponent(prefix)}`, { headers: authHeaders() });
     if (!r.ok) return [];
     const data = await r.json();
     return data.keys || [];

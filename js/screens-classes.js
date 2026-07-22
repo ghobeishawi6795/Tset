@@ -433,22 +433,39 @@ function MessagesScreen({ teacher, classes, roster, messages, refresh }) {
    No teacher login required; reachable from the login screen.
 --------------------------------------------------------- */
 
-function StudentPortalScreen({ roster, students, answers, exams, questions, classes, messages, teachers }) {
+function StudentPortalScreen() {
   const [codeInput, setCodeInput] = useState("");
   const [activeRoster, setActiveRoster] = useState(null);
+  const [className, setClassName] = useState("");
+  const [results, setResults] = useState([]);
+  const [myMessages, setMyMessages] = useState([]);
+  const [teacherName, setTeacherName] = useState("معلم");
   const [notFound, setNotFound] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const lookup = () => {
+  const lookup = async () => {
     const code = codeInput.trim();
     if (!code) return;
-    const found = roster.find((r) => r.code === code);
-    if (found) {
-      setActiveRoster(found);
-      setNotFound(false);
-    } else {
+    setLoading(true);
+    setNotFound(false);
+    try {
+      const r = await fetch(`/api/student-lookup?code=${encodeURIComponent(code)}`);
+      const data = await r.json();
+      if (r.ok && data.found) {
+        setActiveRoster(data.roster);
+        setClassName(data.className);
+        setResults(data.results || []);
+        setMyMessages(data.messages || []);
+        setTeacherName(data.teacherName || "معلم");
+      } else {
+        setActiveRoster(null);
+        setNotFound(true);
+      }
+    } catch {
       setActiveRoster(null);
       setNotFound(true);
     }
+    setLoading(false);
   };
 
   if (!activeRoster) {
@@ -467,42 +484,10 @@ function StudentPortalScreen({ roster, students, answers, exams, questions, clas
           />
         </Field>
         {notFound && <div style={{ color: "#DC2626", fontSize: 13, marginBottom: 14 }}>کد پیدا نشد. از معلم خود بپرس.</div>}
-        <Button type="button" onClick={lookup} style={{ width: "100%", justifyContent: "center", padding: "12px 0", fontSize: 15 }}>ورود</Button>
+        <Button type="button" onClick={lookup} disabled={loading} style={{ width: "100%", justifyContent: "center", padding: "12px 0", fontSize: 15 }}>{loading ? "در حال جستجو..." : "ورود"}</Button>
       </div>
     );
   }
-
-  const className = classes.find((c) => c.id === activeRoster.class_id)?.name || "—";
-  const myStudentIds = students
-    .filter((s) => s.teacher_id === activeRoster.teacher_id && s.fullname.trim() === activeRoster.fullname.trim())
-    .map((s) => s.id);
-  const myAnswers = answers.filter((a) => myStudentIds.includes(a.student_id));
-  const byExam = {};
-  myAnswers.forEach((a) => {
-    byExam[a.exam_id] = byExam[a.exam_id] || [];
-    byExam[a.exam_id].push(a);
-  });
-  const results = Object.entries(byExam).map(([examId, list]) => {
-    const exam = exams.find((e) => e.id === examId);
-    const totalMarks = list.reduce((s, a) => s + (a.mark || 1), 0);
-    const gotMarks = list.reduce((s, a) => s + awardedMarkOf(a), 0);
-    const pendingCount = list.filter((a) => a.is_correct === null && a.awarded_mark == null).length;
-    const pct = totalMarks ? Math.round((gotMarks / totalMarks) * 1000) / 10 : 0;
-    const date = list[0]?.answered_at ? new Date(list[0].answered_at).toLocaleDateString("fa-IR") : "—";
-    return { examId, title: exam?.title || "—", pct, pendingCount, date };
-  }).sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  const myTeacher = (teachers || []).find((t) => t.username === activeRoster.teacher_id);
-  const myMessages = messages.filter((m) => {
-    if (m.sender === "admin") {
-      if (m.audience === "students") return true;
-      if (m.audience === "class" && m.target_id === activeRoster.class_id) return true;
-      if (m.audience === "student" && m.target_id === activeRoster.id) return true;
-      return false;
-    }
-    return m.teacher_id === activeRoster.teacher_id &&
-      (m.target_type === "all" || (m.target_type === "class" && m.target_id === activeRoster.class_id) || (m.target_type === "student" && m.target_id === activeRoster.id));
-  }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return (
     <div style={{ flex: 1.15, padding: "44px 40px", maxHeight: "80vh", overflowY: "auto" }}>
@@ -523,7 +508,7 @@ function StudentPortalScreen({ roster, students, answers, exams, questions, clas
             <div key={r.examId} style={{ border: "1px solid #EEF1F6", borderRadius: 10, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#1E293B" }}>{r.title}</div>
-                <div style={{ fontSize: 11, color: "#94A3B8" }}>{r.date}</div>
+                <div style={{ fontSize: 11, color: "#94A3B8" }}>{r.date ? new Date(r.date).toLocaleDateString("fa-IR") : "—"}</div>
               </div>
               <div style={{ textAlign: "left" }}>
                 <div style={{ fontSize: 16, fontWeight: 800, color: r.pct >= 50 ? "#16A34A" : "#DC2626" }}>{r.pct}%</div>
@@ -542,7 +527,7 @@ function StudentPortalScreen({ roster, students, answers, exams, questions, clas
           {myMessages.map((m) => (
             <div key={m.id} style={{ background: "#F8FAFC", borderRadius: 10, padding: "10px 14px" }}>
               <div style={{ fontSize: 11.5, fontWeight: 700, color: m.sender === "admin" ? "#7C3AED" : "#2563EB", marginBottom: 4 }}>
-                {m.sender === "admin" ? "🏫 مدیر مدرسه" : (myTeacher ? myTeacher.fullname : "معلم")}
+                {m.sender === "admin" ? "🏫 مدیر مدرسه" : teacherName}
               </div>
               <div style={{ fontSize: 13, color: "#334155", whiteSpace: "pre-wrap", marginBottom: 4 }}>{m.text}</div>
               <div style={{ fontSize: 11, color: "#94A3B8" }}>{new Date(m.created_at).toLocaleString("fa-IR")}</div>

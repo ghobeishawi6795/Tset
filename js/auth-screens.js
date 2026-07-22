@@ -136,21 +136,25 @@ function LoginScreen({ onLogin, goRegister, allowRegister, goForgot, portalMode,
     setError("");
     if (!username || !password) { setError("نام کاربری و رمز عبور را وارد کنید."); return; }
     setLoading(true);
-    const teacher = await getJSON(`teacher:${username}`);
-    const ok = teacher && (await verifyPassword(teacher.password, password));
+    let teacher = null;
+    try {
+      const passwordHash = await hashPassword(password);
+      const r = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, passwordHash }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        teacher = data.teacher;
+        saveSession(teacher.username, teacher.password, data.token);
+      }
+    } catch { /* handled by teacher===null below */ }
     setLoading(false);
-    if (!ok) {
+    if (!teacher) {
       setError("نام کاربری یا رمز عبور اشتباه است.");
       return;
     }
-    // Legacy account still had a plain-text password on file — upgrade it
-    // to a hash now that we know the correct password, so it's never
-    // stored in plain text again.
-    if (!looksHashed(teacher.password)) {
-      teacher.password = await hashPassword(password);
-      await setJSON(`teacher:${username}`, teacher);
-    }
-    saveSession(teacher.username, teacher.password);
     onLogin(teacher);
   };
   const handleKeyDown = (e) => { if (e.key === "Enter") submit(); };
@@ -229,16 +233,28 @@ function RegisterScreen({ onRegistered, goLogin }) {
     if (!fullname || !username || !password || !email) { setError("همه فیلدها را پر کنید."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("ایمیل معتبر نیست."); return; }
     setLoading(true);
-    const existing = await getJSON(`teacher:${username}`);
-    if (existing) {
-      setLoading(false);
-      setError("این نام کاربری قبلاً ثبت شده است.");
+    let teacher = null;
+    let errMsg = "";
+    try {
+      const passwordHash = await hashPassword(password);
+      const r = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, fullname, email, passwordHash }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        teacher = data.teacher;
+        saveSession(teacher.username, teacher.password, data.token);
+      } else {
+        errMsg = data.error || "";
+      }
+    } catch { /* handled by teacher===null below */ }
+    setLoading(false);
+    if (!teacher) {
+      setError(errMsg || "این نام کاربری قبلاً ثبت شده است.");
       return;
     }
-    const teacher = { username, password: await hashPassword(password), fullname, email, role: "admin", created_at: new Date().toISOString() };
-    await setJSON(`teacher:${username}`, teacher);
-    setLoading(false);
-    saveSession(teacher.username, teacher.password);
     onRegistered(teacher);
   };
   const handleKeyDown = (e) => { if (e.key === "Enter") submit(); };
