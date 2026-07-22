@@ -22,17 +22,40 @@ function getKV(env) {
   return env.KV || env.Kv || env.kv;
 }
 
+// کلیدهایی که فقط داخلی هستن و هیچ‌وقت نباید از طریق KV عمومی خونده/نوشته بشن،
+// حتی برای یک کاربر لاگین‌کرده
+const INTERNAL_ONLY_PREFIXES = ["session:", "resettoken:"];
+function isInternalKey(key) {
+  return INTERNAL_ONLY_PREFIXES.some((p) => key.startsWith(p));
+}
+
+// سشن کاربر را از هدر Authorization می‌خواند. هیچ اندپوینتی که داده‌ی واقعی
+// (امتحان، دانش‌آموز، معلم و ...) برمی‌گردونه بدون سشن معتبر اجرا نمی‌شه —
+// این همون چیزیه که قبلاً باعث می‌شد هر بازدیدکننده‌ی ناشناس بتونه مستقیم
+// از /api/kv و /api/list کل دیتابیس رو بخونه یا بنویسه.
+async function getSession(request, env) {
+  const kv = getKV(env);
+  if (!kv) return null;
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (!token) return null;
+  const raw = await kv.get(`session:${token}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
 // ==========================================
 // مدیریت KV (برای معلمان و تنظیمات)
 // ==========================================
 async function handleKV(request, env) {
   const kv = getKV(env);
   if (!kv) return json({ error: "KV binding missing" }, 500);
+  const session = await getSession(request, env);
+  if (!session) return json({ error: "لازم است دوباره وارد شوید" }, 401);
   const url = new URL(request.url);
 
   if (request.method === "GET") {
     const key = url.searchParams.get("key");
-    if (!key) return json({ error: "key required" }, 400);
+    if (!key || isInternalKey(key)) return json({ error: "key required" }, 400);
     const raw = await kv.get(key);
     if (raw === null) return json({ error: "not found" }, 404);
     return json({ v: JSON.parse(raw) });
@@ -41,14 +64,14 @@ async function handleKV(request, env) {
   if (request.method === "POST") {
     const body = await request.json();
     const { k, v } = body || {};
-    if (!k) return json({ error: "k required" }, 400);
+    if (!k || isInternalKey(k)) return json({ error: "k required" }, 400);
     await kv.put(k, JSON.stringify(v));
     return json({ ok: true });
   }
 
   if (request.method === "DELETE") {
     const key = url.searchParams.get("key");
-    if (!key) return json({ error: "key required" }, 400);
+    if (!key || isInternalKey(key)) return json({ error: "key required" }, 400);
     await kv.delete(key);
     return json({ ok: true });
   }
@@ -59,8 +82,11 @@ async function handleKV(request, env) {
 async function handleList(request, env) {
   const kv = getKV(env);
   if (!kv) return json({ error: "KV binding missing" }, 500);
+  const session = await getSession(request, env);
+  if (!session) return json({ error: "لازم است دوباره وارد شوید" }, 401);
   const url = new URL(request.url);
   const prefix = url.searchParams.get("prefix") || "";
+  if (isInternalKey(prefix) || prefix === "") return json({ keys: [] });
   const keys = [];
   let cursor;
   do {
@@ -69,6 +95,60 @@ async function handleList(request, env) {
     cursor = res.list_complete ? null : res.cursor;
   } while (cursor);
   return json({ keys });
+}
+
+// معلمی وجود دارد یا نه — فقط یک true/false عمومی، بدون افشای هیچ داده‌ی دیگری.
+// صفحه‌ی ورود پیش از لاگین برای تصمیم «نمایش ثبت‌نام یا نه» به این نیاز داره.
+async function handleTeacherExists(request, env) {
+  const kv = getKV(env);
+  if (!kv) return json({ exists: false });
+  const res = await kv.list({ prefix: "teacher:", limit: 1 });
+  return json({ exists: res.keys.length > 0 });
+}
+
+// ثبت‌نام فقط برای ساخت اولین حساب (مدیر مدرسه) مجاز است — این چک حالا سمت
+// سرور انجام می‌شه، نه فقط با یک state در فرانت‌اند که قابل دور زدن بود.
+async function handleRegister(request, env) {
+  const kv = getKV(env);
+  if (!kv) return json({ error: "KV binding missing" }, 500);
+  const existing = await kv.list({ prefix: "teacher:", limit: 1 });
+  if (existing.keys.length > 0) return json({ error: "امکان ثبت‌نام وجود ندارد" }, 403);
+
+  const { username, fullname, email, passwordHash } = await request.json();
+  if (!username || !fullname || !email || !passwordHash) {
+    return json({ error: "همه فیلدها لازم است" }, 400);
+  }
+  const teacher = { username, fullname, email, password: passwordHash, role: "admin", created_at: new Date().toISOString() };
+  await kv.put(`teacher:${username}`, JSON.stringify(teacher));
+
+  const token = uid() + uid() + uid();
+  await kv.put(`session:${token}`, JSON.stringify({ username, role: "admin" }), { expirationTtl: 60 * 60 * 24 * 30 });
+  return json({ ok: true, token, teacher });
+}
+
+async function handleLogin(request, env) {
+  const kv = getKV(env);
+  if (!kv) return json({ error: "KV binding missing" }, 500);
+  const { username, passwordHash } = await request.json();
+  if (!username || !passwordHash) return json({ error: "نام کاربری و رمز عبور لازم است" }, 400);
+
+  const raw = await kv.get(`teacher:${username}`);
+  const teacher = raw ? JSON.parse(raw) : null;
+  if (!teacher || teacher.password !== passwordHash) {
+    return json({ error: "نام کاربری یا رمز عبور اشتباه است" }, 401);
+  }
+  const token = uid() + uid() + uid();
+  await kv.put(`session:${token}`, JSON.stringify({ username: teacher.username, role: teacher.role || "teacher" }), { expirationTtl: 60 * 60 * 24 * 30 });
+  return json({ ok: true, token, teacher });
+}
+
+async function handleLogout(request, env) {
+  const kv = getKV(env);
+  if (!kv) return json({ ok: true });
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (token) await kv.delete(`session:${token}`);
+  return json({ ok: true });
 }
 
 async function handleForgotPassword(request, env) {
@@ -139,9 +219,71 @@ async function handleResetPassword(request, env) {
   return json({ ok: true });
 }
 
-// ==========================================
-// جلسه‌ی امتحان دانش‌آموز — بدون افشای پاسخ صحیح
-// ==========================================
+// پرتال دانش‌آموزی — با کد شخصی، فقط نتایج و پیام‌های خودِ همون دانش‌آموز
+// برمی‌گرده، نه کل دیتابیس مدرسه.
+async function handleStudentLookup(request, env) {
+  const kv = getKV(env);
+  if (!kv) return json({ error: "KV binding missing" }, 500);
+  const url = new URL(request.url);
+  const code = (url.searchParams.get("code") || "").trim();
+  if (!code) return json({ error: "کد لازم است" }, 400);
+
+  const rosterKeys = await kv.list({ prefix: "roster:" });
+  const rosterRecords = (await Promise.all(rosterKeys.keys.map((k) => kv.get(k.name))))
+    .filter(Boolean).map((r) => JSON.parse(r));
+  const activeRoster = rosterRecords.find((r) => r.code === code);
+  if (!activeRoster) return json({ found: false });
+
+  const classRaw = await kv.get(`class:${activeRoster.class_id}`);
+  const className = classRaw ? JSON.parse(classRaw).name : "—";
+
+  const [studentKeys, examKeys, answersKeys, messageKeys] = await Promise.all([
+    kv.list({ prefix: "student:" }), kv.list({ prefix: "exam:" }),
+    kv.list({ prefix: "answers:" }), kv.list({ prefix: "message:" }),
+  ]);
+  const students = (await Promise.all(studentKeys.keys.map((k) => kv.get(k.name)))).filter(Boolean).map((r) => JSON.parse(r));
+  const myStudentIds = students
+    .filter((s) => s.teacher_id === activeRoster.teacher_id && (s.fullname || "").trim() === (activeRoster.fullname || "").trim())
+    .map((s) => s.id);
+
+  const answerBatches = (await Promise.all(answersKeys.keys.map((k) => kv.get(k.name)))).filter(Boolean).map((r) => JSON.parse(r));
+  const myAnswers = answerBatches.flat().filter((a) => a && myStudentIds.includes(a.student_id));
+
+  const exams = (await Promise.all(examKeys.keys.map((k) => kv.get(k.name)))).filter(Boolean).map((r) => JSON.parse(r));
+  const byExam = {};
+  myAnswers.forEach((a) => { (byExam[a.exam_id] = byExam[a.exam_id] || []).push(a); });
+  const results = Object.entries(byExam).map(([examId, list]) => {
+    const exam = exams.find((e) => e.id === examId);
+    const totalMarks = list.reduce((s, a) => s + (a.mark || 1), 0);
+    const gotMarks = list.reduce((s, a) => s + (a.awarded_mark != null ? a.awarded_mark : (a.is_correct ? a.mark : 0)), 0);
+    const pendingCount = list.filter((a) => a.is_correct === null && a.awarded_mark == null).length;
+    const pct = totalMarks ? Math.round((gotMarks / totalMarks) * 1000) / 10 : 0;
+    const date = list[0]?.answered_at || null;
+    return { examId, title: exam?.title || "—", pct, pendingCount, date };
+  }).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const messages = (await Promise.all(messageKeys.keys.map((k) => kv.get(k.name)))).filter(Boolean).map((r) => JSON.parse(r));
+  const myMessages = messages.filter((m) => {
+    if (m.sender === "admin") {
+      if (m.audience === "students") return true;
+      if (m.audience === "class" && m.target_id === activeRoster.class_id) return true;
+      if (m.audience === "student" && m.target_id === activeRoster.id) return true;
+      return false;
+    }
+    return m.teacher_id === activeRoster.teacher_id &&
+      (m.target_type === "all" || (m.target_type === "class" && m.target_id === activeRoster.class_id) || (m.target_type === "student" && m.target_id === activeRoster.id));
+  }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  let teacherName = "معلم";
+  const teacherRaw = await kv.get(`teacher:${activeRoster.teacher_id}`);
+  if (teacherRaw) teacherName = JSON.parse(teacherRaw).fullname || teacherName;
+
+  return json({
+    found: true,
+    roster: { fullname: activeRoster.fullname, id: activeRoster.id, class_id: activeRoster.class_id },
+    className, results, messages: myMessages, teacherName,
+  });
+}
 // برخلاف /api/kv و /api/list (که هر کلیدی رو خام برمی‌گردونن)، این اندپوینت
 // مخصوص لینک آزمون دانش‌آموزه: فقط داده‌ی لازم برای همون آزمون رو برمی‌گردونه
 // و فیلدهای پاسخ صحیح (correct_answer / correct_answers) رو قبل از ارسال حذف می‌کنه.
@@ -346,6 +488,11 @@ export default {
     const url = new URL(request.url);
 
     // مسیرهای جدید D1
+    if (url.pathname === "/api/teacher-exists" && request.method === "GET") return handleTeacherExists(request, env);
+    if (url.pathname === "/api/register" && request.method === "POST") return handleRegister(request, env);
+    if (url.pathname === "/api/login" && request.method === "POST") return handleLogin(request, env);
+    if (url.pathname === "/api/logout" && request.method === "POST") return handleLogout(request, env);
+    if (url.pathname === "/api/student-lookup" && request.method === "GET") return handleStudentLookup(request, env);
     if (url.pathname === "/api/exam-session" && request.method === "GET") return handleExamSession(request, env);
     if (url.pathname === "/api/answers/submit" && request.method === "POST") return handleSubmitAnswers(request, env);
     if (url.pathname === "/api/answers/batch" && request.method === "POST") {
