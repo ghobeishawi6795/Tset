@@ -43,28 +43,114 @@ async function getSession(request, env) {
   return raw ? JSON.parse(raw) : null;
 }
 
+// این نوع کلیدها متعلق به یک معلم مشخصن (فیلد teacher_id مستقیم دارن)
+const DIRECT_OWNER_PREFIXES = ["exam:", "student:", "class:", "roster:", "cheatalert:", "message:"];
+// این‌ها مالکیتشون غیرمستقیمه — باید از طریق آزمون (exam_id) به معلم برسیم
+const EXAM_LINKED_PREFIXES = ["question:", "answers:", "draft:", "note:"];
+
+// exam_id مربوط به یک کلید غیرمستقیم رو استخراج می‌کنه
+function examIdFromKey(key, value) {
+  if (key.startsWith("question:")) return value?.exam_id || null;
+  if (key.startsWith("answers:")) return Array.isArray(value) ? value[0]?.exam_id || null : null;
+  if (key.startsWith("draft:") || key.startsWith("note:")) return key.split(":")[1] || null;
+  return null;
+}
+
+// مالک واقعی (username معلم) یک کلید رو برمی‌گردونه، یا null اگه قابل تشخیص/عمومی نباشه.
+// یک کش کوچیک از exam_id -> teacher_id می‌گیره تا برای لیست‌های بزرگ، exam یکسان
+// چندبار از KV خونده نشه.
+async function ownerOf(kv, key, value, examOwnerCache) {
+  if (key.startsWith("teacher:")) return value?.username || key.slice("teacher:".length);
+  for (const p of DIRECT_OWNER_PREFIXES) {
+    if (key.startsWith(p)) return value?.teacher_id || null;
+  }
+  for (const p of EXAM_LINKED_PREFIXES) {
+    if (key.startsWith(p)) {
+      const examId = examIdFromKey(key, value);
+      if (!examId) return null;
+      if (examOwnerCache && examOwnerCache.has(examId)) return examOwnerCache.get(examId);
+      const examRaw = await kv.get(`exam:${examId}`);
+      const owner = examRaw ? JSON.parse(examRaw).teacher_id || null : null;
+      if (examOwnerCache) examOwnerCache.set(examId, owner);
+      return owner;
+    }
+  }
+  return null; // پیشوند ناشناخته — به‌صورت پیش‌فرض غیرمجاز برای غیر ادمین
+}
+
 // ==========================================
 // مدیریت KV (برای معلمان و تنظیمات)
 // ==========================================
 async function handleKV(request, env) {
   const kv = getKV(env);
   if (!kv) return json({ error: "KV binding missing" }, 500);
+  const url = new URL(request.url);
+
+  // پیش‌نویس پاسخ‌های دانش‌آموز حین امتحان — دانش‌آموز هیچ‌وقت لاگین نمی‌کنه،
+  // پس این کلید باید بدون سشن هم در دسترس باشه (دقیقاً مثل exam-session و
+  // answers/submit). داده‌ش فقط پاسخ‌های ناتمام خودِ همون دانش‌آموز روی یک
+  // امتحانه، چیز حساسی نیست.
+  const draftKey = request.method === "DELETE" || request.method === "GET"
+    ? url.searchParams.get("key") : null;
+  const isDraftGetOrDelete = draftKey && draftKey.startsWith("draft:");
+
+  if (request.method === "POST" && !isDraftGetOrDelete) {
+    const peek = await request.clone().json().catch(() => ({}));
+    if (peek && typeof peek.k === "string" && peek.k.startsWith("draft:")) {
+      const { k, v } = peek;
+      await kv.put(k, JSON.stringify(v));
+      return json({ ok: true });
+    }
+  }
+  if (isDraftGetOrDelete) {
+    if (request.method === "GET") {
+      const raw = await kv.get(draftKey);
+      if (raw === null) return json({ error: "not found" }, 404);
+      return json({ v: JSON.parse(raw) });
+    }
+    await kv.delete(draftKey);
+    return json({ ok: true });
+  }
+
   const session = await getSession(request, env);
   if (!session) return json({ error: "لازم است دوباره وارد شوید" }, 401);
-  const url = new URL(request.url);
+  const isAdmin = session.role === "admin";
 
   if (request.method === "GET") {
     const key = url.searchParams.get("key");
     if (!key || isInternalKey(key)) return json({ error: "key required" }, 400);
     const raw = await kv.get(key);
     if (raw === null) return json({ error: "not found" }, 404);
-    return json({ v: JSON.parse(raw) });
+    const value = JSON.parse(raw);
+    if (!isAdmin) {
+      const owner = await ownerOf(kv, key, value);
+      if (owner !== session.username) return json({ error: "دسترسی غیرمجاز" }, 403);
+    }
+    return json({ v: value });
   }
 
   if (request.method === "POST") {
     const body = await request.json();
     const { k, v } = body || {};
     if (!k || isInternalKey(k)) return json({ error: "k required" }, 400);
+    if (!isAdmin) {
+      if (k.startsWith("teacher:")) {
+        // معلم فقط می‌تونه رکورد خودش رو ویرایش کنه، و نمی‌تونه نقش خودش رو ارتقا بده
+        if (k !== `teacher:${session.username}` || !v || v.username !== session.username || v.role !== session.role) {
+          return json({ error: "دسترسی غیرمجاز" }, 403);
+        }
+      } else {
+        // برای بقیه‌ی انواع، مقدار جدید باید متعلق به همین معلم باشه...
+        const claimedOwner = await ownerOf(kv, k, v);
+        if (claimedOwner !== session.username) return json({ error: "دسترسی غیرمجاز" }, 403);
+        // ...و اگه کلید از قبل وجود داشته، نباید مال یه معلم دیگه بوده باشه (جلوگیری از ربودن رکورد)
+        const existingRaw = await kv.get(k);
+        if (existingRaw) {
+          const existingOwner = await ownerOf(kv, k, JSON.parse(existingRaw));
+          if (existingOwner !== session.username) return json({ error: "دسترسی غیرمجاز" }, 403);
+        }
+      }
+    }
     await kv.put(k, JSON.stringify(v));
     return json({ ok: true });
   }
@@ -72,6 +158,13 @@ async function handleKV(request, env) {
   if (request.method === "DELETE") {
     const key = url.searchParams.get("key");
     if (!key || isInternalKey(key)) return json({ error: "key required" }, 400);
+    if (!isAdmin) {
+      const existingRaw = await kv.get(key);
+      if (existingRaw) {
+        const owner = await ownerOf(kv, key, JSON.parse(existingRaw));
+        if (owner !== session.username) return json({ error: "دسترسی غیرمجاز" }, 403);
+      }
+    }
     await kv.delete(key);
     return json({ ok: true });
   }
@@ -84,6 +177,7 @@ async function handleList(request, env) {
   if (!kv) return json({ error: "KV binding missing" }, 500);
   const session = await getSession(request, env);
   if (!session) return json({ error: "لازم است دوباره وارد شوید" }, 401);
+  const isAdmin = session.role === "admin";
   const url = new URL(request.url);
   const prefix = url.searchParams.get("prefix") || "";
   if (isInternalKey(prefix) || prefix === "") return json({ keys: [] });
@@ -94,11 +188,52 @@ async function handleList(request, env) {
     keys.push(...res.keys.map((k) => k.name));
     cursor = res.list_complete ? null : res.cursor;
   } while (cursor);
-  return json({ keys });
+
+  if (isAdmin) return json({ keys });
+
+  // برای غیر ادمین‌ها، فقط کلیدهایی که واقعاً مال خودشونه برگردونده می‌شه —
+  // این همون تکه‌ای بود که قبلاً نبود: هر معلم لاگین‌کرده کل دیتای بقیه‌ی
+  // معلم‌ها رو هم می‌گرفت چون این اندپوینت فقط اسم کلیدها رو برمی‌گردوند،
+  // بدون توجه به این‌که واقعاً مال همون کاربره یا نه.
+  const examOwnerCache = new Map();
+  const owned = [];
+  for (const key of keys) {
+    const raw = await kv.get(key);
+    if (raw === null) continue;
+    const owner = await ownerOf(kv, key, JSON.parse(raw), examOwnerCache);
+    if (owner === session.username) owned.push(key);
+  }
+  return json({ keys: owned });
 }
 
-// معلمی وجود دارد یا نه — فقط یک true/false عمومی، بدون افشای هیچ داده‌ی دیگری.
-// صفحه‌ی ورود پیش از لاگین برای تصمیم «نمایش ثبت‌نام یا نه» به این نیاز داره.
+// آیا این دانش‌آموز قبلاً همین امتحان رو داده؟ — به‌جای این‌که کل لیست
+// دانش‌آموزها و پاسخ‌های همه‌ی مدرسه به مرورگر دانش‌آموز بیاد، این فقط
+// یک true/false برمی‌گردونه.
+async function handleExamAttempted(request, env) {
+  const kv = getKV(env);
+  if (!kv) return json({ already: false });
+  const url = new URL(request.url);
+  const examId = url.searchParams.get("examId");
+  const name = (url.searchParams.get("name") || "").trim();
+  if (!examId || !name) return json({ already: false });
+
+  const examRaw = await kv.get(`exam:${examId}`);
+  if (!examRaw) return json({ already: false });
+  const exam = JSON.parse(examRaw);
+
+  const [studentKeys, answersKeys] = await Promise.all([
+    kv.list({ prefix: "student:" }), kv.list({ prefix: "answers:" }),
+  ]);
+  const students = (await Promise.all(studentKeys.keys.map((k) => kv.get(k.name)))).filter(Boolean).map((r) => JSON.parse(r));
+  const matchingIds = students
+    .filter((s) => s.teacher_id === exam.teacher_id && (s.fullname || "").trim() === name)
+    .map((s) => s.id);
+  if (matchingIds.length === 0) return json({ already: false });
+
+  const answerBatches = (await Promise.all(answersKeys.keys.map((k) => kv.get(k.name)))).filter(Boolean).map((r) => JSON.parse(r));
+  const already = answerBatches.flat().some((a) => a && matchingIds.includes(a.student_id) && a.exam_id === examId);
+  return json({ already });
+}
 async function handleTeacherExists(request, env) {
   const kv = getKV(env);
   if (!kv) return json({ exists: false });
@@ -298,6 +433,13 @@ async function handleExamSession(request, env) {
   if (!examRaw) return json({ error: "exam not found" }, 404);
   const exam = JSON.parse(examRaw);
 
+  const teacherRaw = await kv.get(`teacher:${exam.teacher_id}`);
+  const teacherRecord = teacherRaw ? JSON.parse(teacherRaw) : null;
+  const examWithExtras = {
+    ...exam,
+    finish_messages: Array.isArray(teacherRecord?.finish_messages) ? teacherRecord.finish_messages : [],
+  };
+
   const [qKeys, rosterKeys, classKeys] = await Promise.all([
     kv.list({ prefix: "question:" }),
     kv.list({ prefix: "roster:" }),
@@ -318,7 +460,7 @@ async function handleExamSession(request, env) {
     .filter(Boolean).map((r) => JSON.parse(r));
   const classes = allClasses.filter((c) => c.teacher_id === exam.teacher_id);
 
-  return json({ exam, questions, roster, classes });
+  return json({ exam: examWithExtras, questions, roster, classes });
 }
 
 // ذخیره‌ی نهایی پاسخ‌ها — نمره‌دهی سؤالات تستی همیشه سمت سرور محاسبه می‌شه،
@@ -326,7 +468,7 @@ async function handleExamSession(request, env) {
 async function handleSubmitAnswers(request, env) {
   const kv = getKV(env);
   if (!kv) return json({ error: "KV binding missing" }, 500);
-  const { student_id, student, exam_id, answers } = await request.json();
+  const { student_id, student, exam_id, answers, cheat_alert } = await request.json();
   if (!student_id || !exam_id || !Array.isArray(answers)) {
     return json({ error: "اطلاعات ارسالی معتبر نیست" }, 400);
   }
@@ -371,6 +513,9 @@ async function handleSubmitAnswers(request, env) {
     await kv.put(`student:${student_id}`, JSON.stringify({ ...student, id: student_id }));
   }
   await kv.put(`answers:${student_id}`, JSON.stringify(graded));
+  if (cheat_alert && cheat_alert.id) {
+    await kv.put(`cheatalert:${cheat_alert.id}`, JSON.stringify({ ...cheat_alert, exam_id, seen: false }));
+  }
 
   const totalQuestions = qMap.size;
   const totalMarks = [...qMap.values()].reduce((s, q) => s + (q.mark || 0), 0);
@@ -488,6 +633,7 @@ export default {
     const url = new URL(request.url);
 
     // مسیرهای جدید D1
+    if (url.pathname === "/api/exam-attempted" && request.method === "GET") return handleExamAttempted(request, env);
     if (url.pathname === "/api/teacher-exists" && request.method === "GET") return handleTeacherExists(request, env);
     if (url.pathname === "/api/register" && request.method === "POST") return handleRegister(request, env);
     if (url.pathname === "/api/login" && request.method === "POST") return handleLogin(request, env);
