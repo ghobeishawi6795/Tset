@@ -162,11 +162,21 @@ async function flushOfflineQueue() {
   let syncedCount = 0;
   for (const sub of queue) {
     try {
-      const studentOk = await setJSON(`student:${sub.studentRecord.id}`, sub.studentRecord);
-      const answersOk = await setJSON(`answers:${sub.studentRecord.id}`, sub.answerRecords);
-      let alertOk = true;
-      if (sub.cheatAlert) alertOk = await setJSON(`cheatalert:${sub.cheatAlert.id}`, sub.cheatAlert);
-      if (studentOk && answersOk && alertOk) {
+      const r = await fetch("/api/answers/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_id: sub.studentRecord.id,
+          student: sub.studentRecord,
+          exam_id: sub.examId,
+          answers: sub.answerRecords.map((a) => ({
+            question_id: a.question_id, selected_option: a.selected_option, time_taken: a.time_taken,
+          })),
+        }),
+      });
+      let ok = r.ok;
+      if (ok && sub.cheatAlert) ok = await setJSON(`cheatalert:${sub.cheatAlert.id}`, sub.cheatAlert);
+      if (ok) {
         if (sub.draftKeyToDelete) await deleteKey(sub.draftKeyToDelete);
         syncedCount++;
       } else {

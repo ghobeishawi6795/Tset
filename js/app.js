@@ -117,12 +117,36 @@ function EduExamApp() {
     setTeachers(allTeachers);
   }, []);
 
+  // Used instead of refresh() for the student exam-link flow (?exam=ID).
+  // refresh() pulls the *entire* database — every teacher's password hash,
+  // every exam's answer key, every student's records — which is fine for a
+  // logged-in teacher's own dashboard but must never be sent to an anonymous
+  // student. This hits a dedicated endpoint that returns only the one exam's
+  // data, with correct answers stripped out server-side.
+  const loadStudentSession = useCallback(async (examId) => {
+    try {
+      const r = await fetch(`/api/exam-session?examId=${encodeURIComponent(examId)}`);
+      if (!r.ok) { setExams([]); return; }
+      const data = await r.json();
+      setExams([data.exam]);
+      setQuestions(data.questions || []);
+      setRoster(sortByFa(data.roster || [], (r2) => r2.fullname));
+      setClasses(sortByFa(data.classes || [], (c) => c.name));
+    } catch {
+      setExams([]);
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
-      await refresh();
+      if (studentExamId) {
+        await loadStudentSession(studentExamId);
+      } else {
+        await refresh();
+      }
       setReady(true);
     })();
-  }, [refresh]);
+  }, [refresh, loadStudentSession, studentExamId]);
 
   // Auto-sync any exam submissions that were queued locally because the
   // student had no internet connection at the time. Retried whenever the
@@ -131,7 +155,10 @@ function EduExamApp() {
   useEffect(() => {
     const trySync = async () => {
       const synced = await flushOfflineQueue();
-      if (synced > 0) refresh();
+      if (synced > 0) {
+        if (studentExamId) loadStudentSession(studentExamId);
+        else refresh();
+      }
     };
     trySync();
     window.addEventListener("online", trySync);
@@ -140,7 +167,7 @@ function EduExamApp() {
       window.removeEventListener("online", trySync);
       clearInterval(interval);
     };
-  }, [refresh]);
+  }, [refresh, studentExamId, loadStudentSession]);
 
   // Optimistic local-state helpers for classes/roster — KV's list endpoint
   // is only eventually consistent, so a just-written/deleted key can take
@@ -193,7 +220,7 @@ function EduExamApp() {
         questions={questions}
         roster={roster.filter((r) => r.teacher_id === exam.teacher_id)}
         classes={classes.filter((c) => c.teacher_id === exam.teacher_id)}
-        onFinish={refresh}
+        onFinish={() => loadStudentSession(studentExamId)}
         onExit={() => {
           setStudentExamId(null);
           const url = new URL(window.location.href);

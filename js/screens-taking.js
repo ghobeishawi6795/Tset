@@ -224,44 +224,15 @@ function TakeExamScreen({ exam, questions, roster = [], classes = [], onFinish, 
     setSubmitting(true);
     const studentId = uid();
     const timeTakenSec = Math.round((Date.now() - startedAt) / 1000);
-    let correctCount = 0;
-    let pendingEssays = 0;
-    const answerRecords = orderedQuestions.map((q) => {
+    const rawAnswers = orderedQuestions.map((q) => {
       const sel = selections[q.id] || null;
-      if (q.type === "essay") {
-        if (sel) pendingEssays++;
-        return {
-          id: uid(), student_id: studentId, exam_id: exam.id, question_id: q.id,
-          selected_option: sel, is_correct: null, awarded_mark: null, mark: q.mark,
-        };
-      }
-      if (q.type === "mc_multi") {
-        const selArr = Array.isArray(sel) ? [...sel].sort() : [];
-        const correctArr = [...(q.correct_answers || [])].sort();
-        const isCorrect = selArr.length > 0 && selArr.length === correctArr.length && selArr.every((v, i) => v === correctArr[i]);
-        if (isCorrect) correctCount++;
-        return {
-          id: uid(), student_id: studentId, exam_id: exam.id, question_id: q.id,
-          selected_option: selArr.join(","), is_correct: isCorrect, mark: q.mark,
-        };
-      }
-      const isCorrect = sel === q.correct_answer;
-      if (isCorrect) correctCount++;
-      return {
-        id: uid(), student_id: studentId, exam_id: exam.id, question_id: q.id,
-        selected_option: sel, is_correct: isCorrect, mark: q.mark,
-      };
+      const selected_option = Array.isArray(sel) ? sel.join(",") : sel;
+      return { question_id: q.id, selected_option, time_taken: timeTakenSec };
     });
     const studentRecord = {
       id: studentId, fullname: studentName.trim(), class_code: classCode.trim(),
       teacher_id: exam.teacher_id, tab_switches: tabSwitches,
     };
-    const finalAnswerRecords = answerRecords.map((a) => ({
-      ...a, time_taken: timeTakenSec, answered_at: new Date().toISOString(),
-    }));
-    const totalMarks = examQuestions.reduce((s, q) => s + q.mark, 0);
-    const gotMarks = answerRecords.reduce((s, a) => s + (a.is_correct ? a.mark : 0), 0);
-    const pct = totalMarks ? Math.round((gotMarks / totalMarks) * 1000) / 10 : 0;
     const draftKey = `draft:${exam.id}:${studentName.trim()}`;
     let cheatAlert = null;
     if (tabSwitches > 0) {
@@ -275,20 +246,26 @@ function TakeExamScreen({ exam, questions, roster = [], classes = [], onFinish, 
     // Try to submit for real first (only if we appear to have a connection —
     // no point waiting on doomed requests). If anything fails or we're
     // offline, queue the whole submission locally so nothing is lost; it
-    // gets sent automatically once the connection comes back.
+    // gets sent automatically once the connection comes back. Grading
+    // (is_correct / awarded_mark) is always computed server-side from the
+    // real answer key — never trusted from this client.
     let synced = false;
+    let summary = null;
     if (typeof navigator === "undefined" || navigator.onLine) {
       try {
-        const studentOk = await setJSON(`student:${studentId}`, studentRecord);
-        // Every exam attempt gets a fresh studentId, so all of this attempt's
-        // answers always share one exam_id — safe to store as a single batch
-        // instead of one KV write per question.
-        const answersOk = await setJSON(`answers:${studentId}`, finalAnswerRecords);
-        let alertOk = true;
-        if (cheatAlert) alertOk = await setJSON(`cheatalert:${cheatAlert.id}`, cheatAlert);
-        if (studentOk && answersOk && alertOk) {
-          await deleteKey(draftKey);
-          synced = true;
+        const r = await fetch("/api/answers/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ student_id: studentId, student: studentRecord, exam_id: exam.id, answers: rawAnswers }),
+        });
+        if (r.ok) {
+          summary = await r.json();
+          let alertOk = true;
+          if (cheatAlert) alertOk = await setJSON(`cheatalert:${cheatAlert.id}`, cheatAlert);
+          if (alertOk) {
+            await deleteKey(draftKey);
+            synced = true;
+          }
         }
       } catch {
         synced = false;
@@ -296,14 +273,24 @@ function TakeExamScreen({ exam, questions, roster = [], classes = [], onFinish, 
     }
     if (!synced) {
       queueOfflineSubmission({
-        id: uid(), examId: exam.id, studentRecord, answerRecords: finalAnswerRecords,
+        id: uid(), examId: exam.id, studentRecord,
+        answerRecords: rawAnswers.map((a) => ({ ...a })),
         cheatAlert, draftKeyToDelete: draftKey, createdAt: new Date().toISOString(),
       });
     }
 
     const list = finishMessages.length > 0 ? finishMessages : DEFAULT_FINISH_MESSAGES;
     const finishMsg = list[Math.floor(Math.random() * list.length)];
-    setResult({ correctCount, total: examQuestions.length, pct, timeTakenSec, pendingEssays, finishMsg, offlineQueued: !synced });
+    setResult({
+      correctCount: summary?.correctCount ?? null,
+      total: examQuestions.length,
+      pct: summary?.pct ?? null,
+      timeTakenSec,
+      pendingEssays: summary?.pendingEssays ?? null,
+      finishMsg,
+      offlineQueued: !synced,
+      reveal: summary?.reveal || null,
+    });
     setSubmitting(false);
     setStage("done");
     onFinish();
@@ -406,8 +393,10 @@ function TakeExamScreen({ exam, questions, roster = [], classes = [], onFinish, 
             <Award size={32} color="#16A34A" />
           </div>
           <div style={{ fontSize: 14, color: "#64748B", marginBottom: 6 }}>آزمون با موفقیت ثبت شد</div>
-          <div style={{ fontSize: 38, fontWeight: 900, color: "#1E293B", marginBottom: 6 }}>{result.pct}%</div>
-          <div style={{ fontSize: 13, color: "#64748B", marginBottom: 10 }}>{result.correctCount} پاسخ صحیح از {result.total} سوال</div>
+          <div style={{ fontSize: 38, fontWeight: 900, color: "#1E293B", marginBottom: 6 }}>{result.pct != null ? `${result.pct}%` : "—"}</div>
+          <div style={{ fontSize: 13, color: "#64748B", marginBottom: 10 }}>
+            {result.correctCount != null ? `${result.correctCount} پاسخ صحیح از ${result.total} سوال` : "پاسخ‌ها ذخیره شد؛ نمره پس از اتصال به اینترنت محاسبه می‌شود."}
+          </div>
           {result.offlineQueued && (
             <div style={{ fontSize: 12.5, color: "#D97706", background: "#FFFBEB", borderRadius: 10, padding: "10px 12px", marginBottom: 14, lineHeight: 1.9 }}>
               چون در لحظه‌ی ارسال به اینترنت وصل نبودی، پاسخ‌هایت روی همین دستگاه ذخیره شد. به‌محض وصل شدن این گوشی به اینترنت (همین اپ رو باز نگه‌دار یا بعداً دوباره باز کن)، پاسخ‌ها خودکار برای معلم ارسال می‌شن.
@@ -423,19 +412,27 @@ function TakeExamScreen({ exam, questions, roster = [], classes = [], onFinish, 
               نمره‌ی نهایی موقت است — {result.pendingEssays} سوال تشریحی در انتظار تصحیح توسط معلم است.
             </div>
           )}
-          {exam.show_answers && (
+          {result.reveal && (
             <div style={{ textAlign: "right", marginBottom: 22, maxHeight: 320, overflowY: "auto" }}>
               {examQuestions.map((q, idx) => {
                 const optsMap = { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d };
+                const revealed = result.reveal.find((r) => r.question_id === q.id);
+                if (!revealed || q.type === "essay") return null;
                 const sel = selections[q.id];
-                const ok = sel === q.correct_answer;
+                const ok = revealed.is_correct;
                 return (
                   <div key={q.id} style={{ border: "1px solid #EEF1F6", borderRadius: 10, padding: 12, marginBottom: 8 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "#1E293B", marginBottom: 6 }}>{idx + 1}. {q.question_text}</div>
                     <div style={{ fontSize: 12, color: ok ? "#16A34A" : "#DC2626" }}>
-                      پاسخ شما: {sel ? `${sel}. ${optsMap[sel]}` : "بدون پاسخ"}
+                      پاسخ شما: {sel ? `${Array.isArray(sel) ? sel.join("، ") : sel}. ${Array.isArray(sel) ? sel.map((l) => optsMap[l]).join("، ") : optsMap[sel]}` : "بدون پاسخ"}
                     </div>
-                    {!ok && <div style={{ fontSize: 12, color: "#16A34A" }}>پاسخ صحیح: {q.correct_answer}. {optsMap[q.correct_answer]}</div>}
+                    {!ok && (
+                      <div style={{ fontSize: 12, color: "#16A34A" }}>
+                        پاسخ صحیح: {q.type === "mc_multi"
+                          ? (revealed.correct_answers || []).map((l) => `${l}. ${optsMap[l]}`).join("، ")
+                          : `${revealed.correct_answer}. ${optsMap[revealed.correct_answer]}`}
+                      </div>
+                    )}
                   </div>
                 );
               })}
