@@ -212,6 +212,62 @@ async function handleList(request, env) {
 // prompt: "agree" داره. این اندپوینت همون کارو انجام می‌ده، فقط برای اینکه
 // از رابط Playground (که موبایل‌فرندلی نیست) بی‌نیاز باشیم. فقط ادمین
 // می‌تونه صداش بزنه، و بعد از تایید موفق دیگه لازم نیست دوباره استفاده بشه.
+// ==========================================
+// پیشنهاد نمره برای پاسخ تشریحی با هوش مصنوعی — فقط یه پیشنهاده؛ معلم
+// خودش باید نمره رو تایید/ویرایش و ثبت کنه، چیزی خودکار ذخیره نمی‌شه.
+// ==========================================
+async function handleGradeEssay(request, env) {
+  const session = await getSession(request, env);
+  if (!session) return json({ error: "لازم است دوباره وارد شوید" }, 401);
+  if (!env.AI) return json({ error: "قابلیت هوش مصنوعی برای این پروژه فعال نیست" }, 500);
+
+  const body = await request.json().catch(() => ({}));
+  const questionText = (body.question_text || "").trim();
+  const modelAnswer = (body.model_answer || "").trim();
+  const keywords = Array.isArray(body.keywords) ? body.keywords : [];
+  const studentAnswer = (body.student_answer || "").trim();
+  const mark = Number(body.mark) || 1;
+  if (!questionText || !studentAnswer) return json({ error: "متن سوال و پاسخ دانش‌آموز لازمه" }, 400);
+
+  const hasReference = !!(modelAnswer || keywords.length > 0);
+  const prompt = `تو یه معلم منصفی که پاسخ تشریحی دانش‌آموز رو تصحیح می‌کنی.
+سوال: ${questionText}
+نمره‌ی کامل این سوال: ${mark}
+${modelAnswer ? `پاسخ نمونه‌ی معلم: ${modelAnswer}` : "پاسخ نمونه‌ای ثبت نشده."}
+${keywords.length > 0 ? `کلمات کلیدی موردانتظار: ${keywords.join("، ")}` : ""}
+
+پاسخ دانش‌آموز: ${studentAnswer.slice(0, 4000)}
+
+بر اساس میزان تطابق پاسخ دانش‌آموز با پاسخ نمونه/کلمات کلیدی بالا، یه نمره‌ی منصفانه (بین ۰ تا ${mark}، اعشار مجازه) و یه بازخورد خیلی کوتاه (حداکثر ۲ جمله، به فارسی) بده.
+خروجی رو دقیقاً و فقط با این فرمت بده، بدون هیچ توضیح اضافه:
+SCORE: <عدد>
+FEEDBACK: <بازخورد کوتاه>`;
+
+  try {
+    const result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 300,
+    });
+    const raw = (result && (result.response || result.result || "")) || "";
+    const scoreMatch = raw.match(/SCORE:\s*([\d.]+)/i);
+    const feedbackMatch = raw.match(/FEEDBACK:\s*([\s\S]*)/i);
+    if (!scoreMatch) return json({ error: "هوش مصنوعی خروجی قابل‌فهمی نداد. دوباره امتحان کن." }, 502);
+    let score = parseFloat(scoreMatch[1]);
+    if (Number.isNaN(score)) score = 0;
+    score = Math.max(0, Math.min(mark, score));
+    const feedback = feedbackMatch ? feedbackMatch[1].trim().split("\n")[0] : "";
+    return json({ ok: true, score, feedback, hasReference });
+  } catch (err) {
+    console.error("handleGradeEssay failed:", err);
+    return json({ error: `پیشنهاد نمره با خطا مواجه شد: ${err.message || err}` }, 500);
+  }
+}
+
+// ==========================================
+// تایید یک‌باره‌ی مجوز مدل تصویری (Meta License) — Cloudflare قبل از اولین
+// استفاده از llama-3.2-11b-vision-instruct، نیاز به یه درخواست با
+// prompt: "agree" داره. این اندپوینت همون کارو انجام می‌ده، فقط برای اینکه
+// از رابط Playground (که موبایل‌فرندلی نیست) بی‌نیاز باشیم.
 async function handleAcceptAiLicense(request, env) {
   const session = await getSession(request, env);
   if (!session) return json({ error: "لازم است دوباره وارد شوید" }, 401);
@@ -657,6 +713,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/api/ai/grade-essay" && request.method === "POST") return handleGradeEssay(request, env);
     if (url.pathname === "/api/ai/accept-license" && request.method === "POST") return handleAcceptAiLicense(request, env);
     if (url.pathname === "/api/ai/generate-questions" && request.method === "POST") return handleAIGenerateQuestions(request, env);
     if (url.pathname === "/api/exam-attempted" && request.method === "GET") return handleExamAttempted(request, env);
