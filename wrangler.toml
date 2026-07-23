@@ -12,7 +12,13 @@ run_worker_first = ["/api/*"]
 binding = "KV"
 id = "72c23dba33b9423bb7233e77e2bc83ee"
 
+[ai]
+binding = "AI"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "exam_db"
 database_id = "9f7fda8d-ba1b-4ea9-941d-07c82e2414f8"
+
+[ai]
+binding = "AI"

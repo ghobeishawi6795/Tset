@@ -206,6 +206,76 @@ async function handleList(request, env) {
   return json({ keys: owned });
 }
 
+// ==========================================
+// تولید سوال با هوش مصنوعی (Cloudflare Workers AI — رایگان، بدون نیاز به
+// حساب یا کلید جداگانه). خروجی مدل عمداً در همون قالب متنی‌ای خواسته می‌شه
+// که ابزار «ورود گروهی سوال» از قبل می‌فهمه (Q:/A)/ANSWER:/MARK:)، تا
+// معلم قبل از ذخیره‌ی نهایی، متن رو ببینه و ویرایش کنه — هیچ سوالی خودکار
+// و بدون تایید معلم ذخیره نمی‌شه.
+// ==========================================
+const AI_PROMPT_INSTRUCTIONS = `شما دستیار طراحی سوال امتحان هستی. بر اساس محتوای داده‌شده، سوال امتحانی به زبان فارسی بساز.
+خروجی باید دقیقاً و فقط در این قالب باشه (بدون هیچ توضیح اضافه‌ی قبل یا بعدش):
+
+برای سوال چهارگزینه‌ای:
+Q: متن سوال
+A) گزینه یک
+B) گزینه دو
+C) گزینه سه
+D) گزینه چهار
+ANSWER: <حرف گزینه‌ی صحیح، مثلاً A>
+MARK: 1
+
+برای سوال تشریحی:
+Q: متن سوال
+TYPE: essay
+ANSWER: پاسخ نمونه
+MARK: 1
+
+بین هر سوال و سوال بعدی، دقیقاً یک خط خالی بذار. هیچ متن دیگه‌ای (مثل مقدمه یا جمع‌بندی) توی خروجی نباشه.`;
+
+async function handleAIGenerateQuestions(request, env) {
+  const session = await getSession(request, env);
+  if (!session) return json({ error: "لازم است دوباره وارد شوید" }, 401);
+  if (!env.AI) return json({ error: "قابلیت هوش مصنوعی برای این پروژه فعال نیست (باید binding با نام AI به wrangler.toml اضافه بشه)" }, 500);
+
+  const body = await request.json().catch(() => ({}));
+  const { mode, sourceText, imageBase64, count, questionType } = body;
+  const n = Math.min(Math.max(Number(count) || 5, 1), 15);
+  const typeHint = questionType === "essay" ? "فقط سوال تشریحی"
+    : questionType === "mixed" ? "ترکیبی از چهارگزینه‌ای و تشریحی"
+    : "فقط سوال چهارگزینه‌ای";
+  const instructions = `${AI_PROMPT_INSTRUCTIONS}\n\nتعداد سوال موردنیاز: ${n} عدد. نوع سوال: ${typeHint}.`;
+
+  try {
+    let result;
+    if (mode === "image") {
+      if (!imageBase64) return json({ error: "تصویری ارسال نشده" }, 400);
+      // مدل‌های تصویری Workers AI معمولاً بایت‌های خام تصویر رو به‌صورت آرایه می‌خوان
+      const binary = Uint8Array.from(atob(imageBase64), (c) => c.charCodeAt(0));
+      result = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
+        prompt: `${instructions}\n\nمتن/محتوای داخل این تصویر رو بخون و از روی همون محتوا سوال بساز.`,
+        image: Array.from(binary),
+        max_tokens: 2048,
+      });
+    } else {
+      if (!sourceText || !sourceText.trim()) return json({ error: "متنی ارسال نشده" }, 400);
+      result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+        messages: [
+          { role: "system", content: instructions },
+          { role: "user", content: `این متن رو بخون و از روش سوال بساز:\n\n${sourceText.slice(0, 12000)}` },
+        ],
+        max_tokens: 3000,
+      });
+    }
+    const outputText = (result && (result.response || result.result || "")) || "";
+    if (!outputText.trim()) return json({ error: "هوش مصنوعی خروجی برنگردوند، دوباره امتحان کن." }, 502);
+    return json({ ok: true, text: outputText.trim() });
+  } catch (err) {
+    console.error("handleAIGenerateQuestions failed:", err);
+    return json({ error: "تولید سوال با خطا مواجه شد. دوباره امتحان کن." }, 500);
+  }
+}
+
 // آیا این دانش‌آموز قبلاً همین امتحان رو داده؟ — به‌جای این‌که کل لیست
 // دانش‌آموزها و پاسخ‌های همه‌ی مدرسه به مرورگر دانش‌آموز بیاد، این فقط
 // یک true/false برمی‌گردونه.
@@ -544,13 +614,13 @@ async function handleSubmitAnswers(request, env) {
   });
 }
 
-// ==========================================
-// نقطه ورود اصلی (Router)
-// ==========================================
+
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/api/ai/generate-questions" && request.method === "POST") return handleAIGenerateQuestions(request, env);
     if (url.pathname === "/api/exam-attempted" && request.method === "GET") return handleExamAttempted(request, env);
     if (url.pathname === "/api/teacher-exists" && request.method === "GET") return handleTeacherExists(request, env);
     if (url.pathname === "/api/register" && request.method === "POST") return handleRegister(request, env);
