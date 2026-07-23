@@ -272,7 +272,7 @@ async function handleAIGenerateQuestions(request, env) {
     return json({ ok: true, text: outputText.trim() });
   } catch (err) {
     console.error("handleAIGenerateQuestions failed:", err);
-    return json({ error: "تولید سوال با خطا مواجه شد. دوباره امتحان کن." }, 500);
+    return json({ error: `تولید سوال با خطا مواجه شد: ${err.message || err}` }, 500);
   }
 }
 
