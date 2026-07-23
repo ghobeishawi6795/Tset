@@ -214,7 +214,7 @@ async function handleList(request, env) {
 // می‌تونه صداش بزنه، و بعد از تایید موفق دیگه لازم نیست دوباره استفاده بشه.
 async function handleAcceptAiLicense(request, env) {
   const session = await getSession(request, env);
-  if (!session || session.role !== "admin") return json({ error: "لازم است دوباره وارد شوید" }, 401);
+  if (!session) return json({ error: "لازم است دوباره وارد شوید" }, 401);
   if (!env.AI) return json({ error: "AI binding فعال نیست" }, 500);
   try {
     const result = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", { prompt: "agree" });
