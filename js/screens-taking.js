@@ -1003,7 +1003,7 @@ function EssayGrading({ examId, questions, answers, students, refresh }) {
     if (kws.length === 0) return;
     const text = (answerText || "").toLowerCase();
     const matched = kws.filter((k) => text.includes(k.toLowerCase())).length;
-    const suggested = Math.round((matched / kws.length) * question.mark * 10) / 10;
+    const suggested = Math.round((matched / kws.length) * question.mark * 4) / 4;
     setDrafts((d) => ({ ...d, [answerId]: String(suggested) }));
   };
 
