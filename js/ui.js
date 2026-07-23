@@ -235,6 +235,19 @@ function downloadTextFile(filename, content, mime) {
   URL.revokeObjectURL(url);
 }
 
+// می‌گیره یه آرایه از { name, rows } (هرکدوم یه شیت) و یه فایل xlsx واقعی
+// می‌سازه (با کتابخانه‌ی SheetJS که توی index.html اضافه شده)، نه فقط یه CSV
+// با پسوند xlsx. rows هر شیت باید آرایه‌ای از آبجکت‌های ساده باشه (کلید = اسم ستون).
+function downloadExcelWorkbook(filename, sheets) {
+  const wb = XLSX.utils.book_new();
+  sheets.forEach(({ name, rows }) => {
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31)); // اسم شیت حداکثر ۳۱ کاراکتر مجازه
+  });
+  const arrayBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  downloadTextFile(filename, arrayBuffer, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+}
+
 /* ---------------------------------------------------------
    Small UI atoms
 --------------------------------------------------------- */

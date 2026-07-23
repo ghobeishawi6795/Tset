@@ -756,6 +756,66 @@ function ResultsScreen({ teacher, exams, questions, students, answers, initialEx
     downloadTextFile(`${exam.title}-نتایج.csv`, "\uFEFF" + lines.join("\n"), "text/csv;charset=utf-8;");
   };
 
+  // خروجی Excel همین امتحان — یک ردیف به ازای هر دانش‌آموز، یک ستون به ازای
+  // هر سوال (نمره‌ی همون سوال) به‌علاوه‌ی جمع کل و درصد.
+  const exportExcelExam = () => {
+    const sheetRows = rows.map((r, i) => {
+      const list = byStudent[r.studentId] || [];
+      const row = { "رتبه": i + 1, "نام دانش‌آموز": r.name, "کلاس": r.cls || "" };
+      examQuestionsList.forEach((q, qi) => {
+        const a = list.find((x) => x.question_id === q.id);
+        row[`سوال ${qi + 1} (از ${q.mark})`] = a ? awardedMarkOf(a) : "";
+      });
+      row["جمع نمره"] = list.reduce((s, a) => s + awardedMarkOf(a), 0);
+      row["از کل"] = list.reduce((s, a) => s + (a.mark || 1), 0);
+      row["درصد"] = r.pct;
+      return row;
+    });
+    downloadExcelWorkbook(`${exam.title}-نمرات.xlsx`, [{ name: "نمرات", rows: sheetRows }]);
+  };
+
+  // خروجی Excel کل کلاس روی همه‌ی امتحان‌های اون کلاس — یه شیت به ازای هر
+  // امتحان (با ریز نمره‌ی هر سوال) به‌علاوه‌ی یه شیت خلاصه که درصد هر
+  // دانش‌آموز رو توی همه‌ی امتحان‌ها کنار هم می‌ذاره.
+  const exportExcelClass = () => {
+    if (!classFilter) return;
+    const classExams = myExams.filter((e) =>
+      answers.some((a) => a.exam_id === e.id && students.find((s) => s.id === a.student_id)?.class_code === classFilter)
+    );
+    const sheets = [];
+    const summaryByStudent = {};
+    classExams.forEach((e) => {
+      const qList = questions.filter((q) => q.exam_id === e.id);
+      const eAnswers = answers.filter((a) => a.exam_id === e.id);
+      const byS = {};
+      eAnswers.forEach((a) => { (byS[a.student_id] = byS[a.student_id] || []).push(a); });
+      const sheetRows = Object.entries(byS)
+        .map(([sid, list]) => ({ sid, student: students.find((s) => s.id === sid) || { fullname: "—" }, list }))
+        .filter(({ student }) => student.class_code === classFilter)
+        .map(({ student, list }) => {
+          const row = { "نام دانش‌آموز": student.fullname };
+          qList.forEach((q, qi) => {
+            const a = list.find((x) => x.question_id === q.id);
+            row[`سوال ${qi + 1} (از ${q.mark})`] = a ? awardedMarkOf(a) : "";
+          });
+          const got = list.reduce((s, a) => s + awardedMarkOf(a), 0);
+          const total = list.reduce((s, a) => s + (a.mark || 1), 0);
+          const pct = total ? Math.round((got / total) * 1000) / 10 : 0;
+          row["جمع نمره"] = got; row["از کل"] = total; row["درصد"] = pct;
+          summaryByStudent[student.fullname] = summaryByStudent[student.fullname] || {};
+          summaryByStudent[student.fullname][e.title] = pct;
+          return row;
+        });
+      if (sheetRows.length > 0) sheets.push({ name: e.title || "آزمون", rows: sheetRows });
+    });
+    const summaryRows = Object.entries(summaryByStudent).map(([name, byExam]) => {
+      const row = { "نام دانش‌آموز": name };
+      classExams.forEach((e) => { row[e.title] = byExam[e.title] ?? ""; });
+      return row;
+    });
+    downloadExcelWorkbook(`کلاس-${classFilter}-همه-آزمون‌ها.xlsx`, [{ name: "خلاصه", rows: summaryRows }, ...sheets]);
+  };
+
   return (
     <div style={hideTopBar ? {} : { flex: 1, padding: "30px 34px", overflowY: "auto" }}>
       {!hideTopBar && <TopBar title={headerTitle || "نتایج آزمون"} teacherName={teacher.fullname} />}
@@ -776,7 +836,13 @@ function ResultsScreen({ teacher, exams, questions, students, answers, initialEx
           )}
         </div>
         {rows.length > 0 && (
-          <Button variant="ghost" onClick={exportCSV}><Download size={15} />خروجی CSV</Button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button variant="ghost" onClick={exportCSV}><Download size={15} />خروجی CSV</Button>
+            <Button variant="ghost" onClick={exportExcelExam}><Download size={15} />خروجی Excel این آزمون</Button>
+            {classFilter && (
+              <Button variant="ghost" onClick={exportExcelClass}><Download size={15} />خروجی Excel کل کلاس {classFilter}</Button>
+            )}
+          </div>
         )}
       </div>
 
