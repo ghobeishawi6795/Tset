@@ -954,6 +954,9 @@ function EssayGrading({ examId, questions, answers, students, refresh }) {
   const essayQuestions = questions.filter((q) => q.exam_id === examId && q.type === "essay");
   const [drafts, setDrafts] = useState({}); // answerId -> input value
   const [savingId, setSavingId] = useState(null);
+  const [aiGradingId, setAiGradingId] = useState(null);
+  const [aiFeedback, setAiFeedback] = useState({}); // answerId -> { feedback, hasReference }
+  const [aiGradeError, setAiGradeError] = useState({}); // answerId -> error text
 
   if (essayQuestions.length === 0) return null;
 
@@ -1004,6 +1007,37 @@ function EssayGrading({ examId, questions, answers, students, refresh }) {
     setDrafts((d) => ({ ...d, [answerId]: String(suggested) }));
   };
 
+  // Asks the AI to suggest a score + short feedback for one essay answer.
+  // Never saves anything itself — just fills the draft field for the
+  // teacher to review, edit, and confirm with the existing "ثبت نمره" button.
+  const suggestWithAI = async (answerId, question, answerText) => {
+    setAiGradeError((e) => ({ ...e, [answerId]: "" }));
+    setAiGradingId(answerId);
+    try {
+      const r = await fetch("/api/ai/grade-essay", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          question_text: question.question_text,
+          model_answer: question.model_answer || "",
+          keywords: question.keywords || [],
+          student_answer: answerText,
+          mark: question.mark,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setAiGradeError((e) => ({ ...e, [answerId]: data.error || "پیشنهاد نمره با خطا مواجه شد." }));
+      } else {
+        setDrafts((d) => ({ ...d, [answerId]: String(data.score) }));
+        setAiFeedback((f) => ({ ...f, [answerId]: { feedback: data.feedback, hasReference: data.hasReference } }));
+      }
+    } catch {
+      setAiGradeError((e) => ({ ...e, [answerId]: "اتصال برقرار نشد." }));
+    }
+    setAiGradingId(null);
+  };
+
   return (
     <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #EEF1F6", padding: 22, marginTop: 20 }}>
       <div style={{ fontSize: 15, fontWeight: 800, color: "#1E293B", marginBottom: 4 }}>تصحیح پاسخ‌های تشریحی</div>
@@ -1040,6 +1074,14 @@ function EssayGrading({ examId, questions, answers, students, refresh }) {
                   پیشنهاد نمره (خودکار)
                 </Button>
               )}
+              <Button
+                variant="ghost"
+                style={{ fontSize: 12, padding: "8px 12px" }}
+                onClick={() => suggestWithAI(answer.id, question, answer.selected_option)}
+                disabled={aiGradingId === answer.id}
+              >
+                {aiGradingId === answer.id ? "در حال بررسی..." : "✨ پیشنهاد نمره با هوش مصنوعی"}
+              </Button>
               <TextInput
                 type="number" min={0} max={question.mark}
                 placeholder={`نمره از ${question.mark}`}
@@ -1051,6 +1093,17 @@ function EssayGrading({ examId, questions, answers, students, refresh }) {
                 {savingId === answer.id ? "..." : "ثبت نمره"}
               </Button>
             </div>
+            {aiGradeError[answer.id] && (
+              <div style={{ fontSize: 12, color: "#DC2626", marginTop: 8 }}>{aiGradeError[answer.id]}</div>
+            )}
+            {aiFeedback[answer.id] && (
+              <div style={{ fontSize: 12, color: "#1E3A8A", background: "#EFF6FF", border: "1px solid #DBEAFE", borderRadius: 8, padding: 10, marginTop: 8 }}>
+                <div>✨ نظر هوش مصنوعی: {aiFeedback[answer.id].feedback}</div>
+                {!aiFeedback[answer.id].hasReference && (
+                  <div style={{ color: "#B45309", marginTop: 4 }}>⚠️ چون برای این سوال پاسخ نمونه/کلمات کلیدی ثبت نشده، این فقط یه حدسه — حتماً خودت هم بررسی کن.</div>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
