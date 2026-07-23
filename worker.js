@@ -207,6 +207,24 @@ async function handleList(request, env) {
 }
 
 // ==========================================
+// تایید یک‌باره‌ی مجوز مدل تصویری (Meta License) — Cloudflare قبل از اولین
+// استفاده از llama-3.2-11b-vision-instruct، نیاز به یه درخواست با
+// prompt: "agree" داره. این اندپوینت همون کارو انجام می‌ده، فقط برای اینکه
+// از رابط Playground (که موبایل‌فرندلی نیست) بی‌نیاز باشیم. فقط ادمین
+// می‌تونه صداش بزنه، و بعد از تایید موفق دیگه لازم نیست دوباره استفاده بشه.
+async function handleAcceptAiLicense(request, env) {
+  const session = await getSession(request, env);
+  if (!session || session.role !== "admin") return json({ error: "لازم است دوباره وارد شوید" }, 401);
+  if (!env.AI) return json({ error: "AI binding فعال نیست" }, 500);
+  try {
+    const result = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", { prompt: "agree" });
+    return json({ ok: true, result });
+  } catch (err) {
+    return json({ error: err.message || String(err) }, 500);
+  }
+}
+
+// ==========================================
 // تولید سوال با هوش مصنوعی (Cloudflare Workers AI — رایگان، بدون نیاز به
 // حساب یا کلید جداگانه). خروجی مدل عمداً در همون قالب متنی‌ای خواسته می‌شه
 // که ابزار «ورود گروهی سوال» از قبل می‌فهمه (Q:/A)/ANSWER:/MARK:)، تا
@@ -620,6 +638,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/api/ai/accept-license" && request.method === "POST") return handleAcceptAiLicense(request, env);
     if (url.pathname === "/api/ai/generate-questions" && request.method === "POST") return handleAIGenerateQuestions(request, env);
     if (url.pathname === "/api/exam-attempted" && request.method === "GET") return handleExamAttempted(request, env);
     if (url.pathname === "/api/teacher-exists" && request.method === "GET") return handleTeacherExists(request, env);
