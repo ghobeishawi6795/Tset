@@ -195,13 +195,24 @@ async function handleList(request, env) {
   // این همون تکه‌ای بود که قبلاً نبود: هر معلم لاگین‌کرده کل دیتای بقیه‌ی
   // معلم‌ها رو هم می‌گرفت چون این اندپوینت فقط اسم کلیدها رو برمی‌گردوند،
   // بدون توجه به این‌که واقعاً مال همون کاربره یا نه.
+  // خواندن و بررسی مالکیت هر کلید یه رفت‌وبرگشت جدا به KV داره؛ اگه این کارو
+  // یکی‌یکی و پشت‌سرهم انجام بدیم، برای مدرسه‌ای با صدها رکورد چندین ثانیه
+  // طول می‌کشه. به‌جاش دسته‌دسته (هم‌زمان) پردازش می‌کنیم تا سریع بمونه، بدون
+  // اینکه فشار زیادی روی KV بذاریم.
   const examOwnerCache = new Map();
   const owned = [];
-  for (const key of keys) {
-    const raw = await kv.get(key);
-    if (raw === null) continue;
-    const owner = await ownerOf(kv, key, JSON.parse(raw), examOwnerCache);
-    if (owner === session.username) owned.push(key);
+  const CONCURRENCY = 25;
+  for (let i = 0; i < keys.length; i += CONCURRENCY) {
+    const batch = keys.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (key) => {
+        const raw = await kv.get(key);
+        if (raw === null) return null;
+        const owner = await ownerOf(kv, key, JSON.parse(raw), examOwnerCache);
+        return owner === session.username ? key : null;
+      })
+    );
+    for (const key of results) if (key) owned.push(key);
   }
   return json({ keys: owned });
 }
