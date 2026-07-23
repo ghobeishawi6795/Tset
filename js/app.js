@@ -305,6 +305,9 @@ function EduExamApp() {
         onLogout={() => { performLogout(); setTeacher(null); setView("dashboard"); }}
         onUpdateSelf={(updated) => { setTeacher(updated); saveSession(updated.username, updated.password, getAuthToken()); }}
         refresh={refresh}
+        addLocalClass={addLocalClass}
+        removeLocalClass={removeLocalClass}
+        updateLocalClass={updateLocalClass}
       />
     );
   }

@@ -459,7 +459,7 @@ function AdminSidebar({ active, onNavigate, onSettings, onHelp, onLogout, adminN
   );
 }
 
-function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, students, questions, answers, messages, cheatAlerts, onLogout, onUpdateSelf, refresh }) {
+function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, students, questions, answers, messages, cheatAlerts, onLogout, onUpdateSelf, refresh, addLocalClass, removeLocalClass, updateLocalClass }) {
   const [view, setView] = useState("dashboard");
   const [showCreate, setShowCreate] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState(null);
@@ -523,6 +523,7 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
   const assignClass = async (cls, newTeacherUsername) => {
     const updatedClass = { ...cls, teacher_id: newTeacherUsername || null };
     const members = roster.filter((r) => r.class_id === cls.id);
+    updateLocalClass && updateLocalClass(updatedClass);
     await Promise.all([
       setJSON(`class:${cls.id}`, updatedClass),
       ...members.map((r) => setJSON(`roster:${r.id}`, { ...r, teacher_id: newTeacherUsername || null })),
@@ -533,6 +534,10 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
   const createClass = async (name) => {
     const id = uid();
     const record = { id, name: name.trim(), teacher_id: null, created_at: new Date().toISOString() };
+    // مثل افزودن دانش‌آموز، لیست /api/list ممکنه چند ثانیه طول بکشه تا کلید
+    // تازه‌نوشته‌شده رو نشون بده — بدون این خط، کلاس جدید انگار «اضافه نشده»
+    // به‌نظر می‌رسید و کاربر دوباره می‌زد، که باعث دوتا شدنش می‌شد.
+    addLocalClass && addLocalClass(record);
     await setJSON(`class:${id}`, record);
     await refresh();
   };
@@ -540,6 +545,7 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
   const removeClass = async (cls) => {
     const members = roster.filter((r) => r.class_id === cls.id);
     if (!window.confirm(`کلاس «${cls.name}» حذف شود؟${members.length ? ` ${members.length} دانش‌آموز این کلاس نیز حذف می‌شوند.` : ""} این کار قابل بازگشت نیست.`)) return;
+    removeLocalClass && removeLocalClass(cls.id);
     const deletions = [deleteKey(`class:${cls.id}`), ...members.map((r) => deleteKey(`roster:${r.id}`))];
     await Promise.all(deletions);
     await refresh();
@@ -550,7 +556,9 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
   const saveEditClass = async (c) => {
     if (!editClassName.trim() || editClassName.trim() === c.name) { cancelEditClass(); return; }
     setSavingClassName(true);
-    await setJSON(`class:${c.id}`, { ...c, name: editClassName.trim() });
+    const updated = { ...c, name: editClassName.trim() };
+    updateLocalClass && updateLocalClass(updated);
+    await setJSON(`class:${c.id}`, updated);
     setSavingClassName(false);
     cancelEditClass();
     await refresh();
