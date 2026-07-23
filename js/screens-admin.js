@@ -250,6 +250,30 @@ function AdminRosterModal({ cls, roster, onClose, refresh }) {
     if (added > 0) { setBulkText(""); await refresh(); }
   };
 
+  // آپلود فایل اکسل: فقط ستون اول شیت اول رو می‌خونه (اسم دانش‌آموز)،
+  // ردیف اول رو اگه شبیه هدر بود (مثلاً «نام») نادیده می‌گیره، و بقیه رو
+  // توی همون textarea گروهی می‌ریزه تا معلم قبل از ثبت نهایی مرورش کنه.
+  const [excelMsg, setExcelMsg] = useState("");
+  const handleExcelFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setExcelMsg("در حال خواندن فایل...");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const firstSheet = wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+      let names = grid.map((row) => String(row[0] ?? "").trim()).filter(Boolean);
+      if (names.length && /^(نام|name|fullname|نام دانش.آموز)$/i.test(names[0])) names = names.slice(1);
+      if (names.length === 0) { setExcelMsg("هیچ نامی توی فایل پیدا نشد."); return; }
+      setBulkText((prev) => (prev.trim() ? prev.trim() + "\n" + names.join("\n") : names.join("\n")));
+      setExcelMsg(`${names.length} نام از فایل خونده شد — قبل از «افزودن همه» مرورشون کن.`);
+    } catch (err) {
+      setExcelMsg("خواندن فایل اکسل با خطا مواجه شد. مطمئن شو فایل .xlsx یا .csv سالم است.");
+    }
+  };
+
   const regenerateCodeFor = async (member) => {
     const allCodes = roster.filter((r) => r.id !== member.id).map((r) => r.code);
     const code = generateCode(allCodes);
@@ -274,8 +298,13 @@ function AdminRosterModal({ cls, roster, onClose, refresh }) {
       {showBulk ? (
         <div style={{ marginBottom: 18 }}>
           <div style={{ fontSize: 12, color: "#64748B", marginBottom: 10, lineHeight: 1.8 }}>
-            اسم هر دانش‌آموز را در یک خط جدا بنویسید (یا با ویرگول جدا کنید).
+            اسم هر دانش‌آموز را در یک خط جدا بنویسید (یا با ویرگول جدا کنید)، یا از فایل اکسل بارگذاری کنید.
           </div>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "#2563EB", fontWeight: 700, cursor: "pointer", marginBottom: 10 }}>
+            <Upload size={14} />بارگذاری نام‌ها از فایل اکسل (.xlsx / .csv)
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleExcelFile} style={{ display: "none" }} />
+          </label>
+          {excelMsg && <div style={{ fontSize: 12, color: "#64748B", marginBottom: 10 }}>{excelMsg}</div>}
           <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} rows={6}
             placeholder={"علی رضایی\nمریم احمدی\n..."}
             style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", marginBottom: 10 }} />
