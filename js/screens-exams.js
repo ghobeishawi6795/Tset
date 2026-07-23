@@ -337,6 +337,40 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
   const [copySelected, setCopySelected] = useState([]);
   const [showAddFromBank, setShowAddFromBank] = useState(false);
   const [bankSelected, setBankSelected] = useState([]);
+  const [aiMode, setAiMode] = useState("text"); // 'text' | 'image'
+  const [aiSourceText, setAiSourceText] = useState("");
+  const [aiImageData, setAiImageData] = useState(""); // base64 (no data-url prefix)
+  const [aiImageName, setAiImageName] = useState("");
+  const [aiCount, setAiCount] = useState(5);
+  const [aiQType, setAiQType] = useState("mc"); // 'mc' | 'essay' | 'mixed'
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+
+  const generateWithAI = async () => {
+    setAiError("");
+    if (aiMode === "text" && !aiSourceText.trim()) { setAiError("یه متن وارد کن."); return; }
+    if (aiMode === "image" && !aiImageData) { setAiError("یه تصویر انتخاب کن."); return; }
+    setAiLoading(true);
+    try {
+      const r = await fetch("/api/ai/generate-questions", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          mode: aiMode,
+          sourceText: aiMode === "text" ? aiSourceText : undefined,
+          imageBase64: aiMode === "image" ? aiImageData : undefined,
+          count: aiCount,
+          questionType: aiQType,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { setAiError(data.error || "تولید سوال با خطا مواجه شد."); setAiLoading(false); return; }
+      setBulkText((prev) => (prev ? prev + "\n\n" : "") + data.text);
+    } catch {
+      setAiError("اتصال برقرار نشد. دوباره امتحان کن.");
+    }
+    setAiLoading(false);
+  };
 
   const letters = ["A", "B", "C", "D"];
 
@@ -734,6 +768,63 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
 
       {showBulkImport && (
         <Modal title="وارد کردن دسته‌ای سوال" onClose={() => setShowBulkImport(false)}>
+          <div style={{ border: "1px solid #DBEAFE", background: "#EFF6FF", borderRadius: 10, padding: 12, marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1E3A8A", marginBottom: 8 }}>✨ تولید سوال با هوش مصنوعی</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <button type="button" onClick={() => setAiMode("text")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "1px solid #BFDBFE", background: aiMode === "text" ? "#2563EB" : "#fff", color: aiMode === "text" ? "#fff" : "#1E3A8A", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>از متن</button>
+              <button type="button" onClick={() => setAiMode("image")} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: "1px solid #BFDBFE", background: aiMode === "image" ? "#2563EB" : "#fff", color: aiMode === "image" ? "#fff" : "#1E3A8A", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>از عکس (اسکن صفحه)</button>
+            </div>
+            {aiMode === "text" ? (
+              <textarea
+                value={aiSourceText}
+                onChange={(e) => setAiSourceText(e.target.value)}
+                rows={5}
+                style={{ ...inputStyle, resize: "vertical", fontSize: 12.5, marginBottom: 8 }}
+                placeholder="متن درس یا جزوه رو این‌جا پیست کن..."
+              />
+            ) : (
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "#2563EB", cursor: "pointer" }}>
+                  <Upload size={14} />
+                  {aiImageName || "انتخاب عکس صفحه"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const file = e.target.files && e.target.files[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        const dataUrl = String(ev.target.result || "");
+                        setAiImageData(dataUrl.split(",")[1] || "");
+                        setAiImageName(file.name);
+                      };
+                      reader.readAsDataURL(file);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <select value={aiQType} onChange={(e) => setAiQType(e.target.value)} style={{ ...inputStyle, flex: 1, fontSize: 12.5 }}>
+                <option value="mc">چهارگزینه‌ای</option>
+                <option value="essay">تشریحی</option>
+                <option value="mixed">ترکیبی</option>
+              </select>
+              <select value={aiCount} onChange={(e) => setAiCount(Number(e.target.value))} style={{ ...inputStyle, width: 90, fontSize: 12.5 }}>
+                {[3, 5, 8, 10, 15].map((n) => <option key={n} value={n}>{n} سوال</option>)}
+              </select>
+            </div>
+            {aiError && <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 8 }}>{aiError}</div>}
+            <Button type="button" onClick={generateWithAI} disabled={aiLoading} style={{ width: "100%", justifyContent: "center" }}>
+              {aiLoading ? "در حال تولید..." : "تولید سوال"}
+            </Button>
+            <div style={{ fontSize: 11, color: "#64748B", marginTop: 6 }}>
+              سوال‌های تولیدشده پایین اضافه می‌شن — قبل از «افزودن سوالات» حتماً بازبینی‌شون کن، چون ممکنه هوش مصنوعی اشتباه کنه.
+            </div>
+          </div>
           <div style={{ fontSize: 12, color: "#64748B", marginBottom: 10, lineHeight: 1.8, background: "#F8FAFC", padding: 10, borderRadius: 8 }}>
             برای سوال چندگزینه‌ای:
             <pre style={{ whiteSpace: "pre-wrap", fontSize: 11, marginTop: 6 }}>{`Q: متن سوال
