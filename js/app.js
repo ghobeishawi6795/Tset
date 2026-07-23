@@ -98,6 +98,14 @@ function EduExamApp() {
     })();
   }, []);
 
+  // شناسه‌ی چیزهایی که همین الان (توسط خود کاربر) حذف شدن رو چند ثانیه نگه
+  // می‌داریم؛ چون لیست KV ممکنه هنوز نسخه‌ی حذف‌نشده رو برگردونه و باعث بشه
+  // چیزی که حذف کردیم دوباره ظاهر بشه.
+  const deletedClassIdsRef = useRef(new Set());
+  const deletedRosterIdsRef = useRef(new Set());
+  const deletedQuestionIdsRef = useRef(new Set());
+  const deletedExamIdsRef = useRef(new Set());
+
   const refresh = useCallback(async () => {
     const [ex, qs, st, answerBatches, cl, ro, msg, alerts, allTeachers] = await Promise.all([
       loadAll("exam:"), loadAll("question:"), loadAll("student:"), loadAll("answers:"),
@@ -108,9 +116,35 @@ function EduExamApp() {
     // answer records as one array — flatten so the rest of the app can keep
     // treating `answers` as a flat list of individual answer records.
     const an = answerBatches.flat().filter(Boolean);
-    setExams(ex); setQuestions(qs); setStudents(st); setAnswers(an);
-    setClasses(sortByFa(cl, (c) => c.name));
-    setRoster(sortByFa(ro, (r) => r.fullname));
+    setStudents(st); setAnswers(an);
+    // برای کلاس/دانش‌آموز/سوال/آزمون، به‌جای جایگزینی کامل با نسخه‌ی سرور (که
+    // ممکنه چند ثانیه عقب‌تر باشه و باعث بشه چیزی که تازه اضافه کردیم
+    // ناپدید به‌نظر برسه)، نسخه‌ی سرور رو با هرچی که همین الان توی رابط
+    // کاربری داریم و سرور هنوز نشونش نداده «ادغام» می‌کنیم.
+    setExams((prev) => {
+      const fresh = ex.filter((e) => !deletedExamIdsRef.current.has(e.id));
+      const freshIds = new Set(fresh.map((e) => e.id));
+      const extra = prev.filter((e) => !freshIds.has(e.id) && !deletedExamIdsRef.current.has(e.id));
+      return [...fresh, ...extra];
+    });
+    setClasses((prev) => {
+      const fresh = cl.filter((c) => !deletedClassIdsRef.current.has(c.id));
+      const freshIds = new Set(fresh.map((c) => c.id));
+      const extra = prev.filter((c) => !freshIds.has(c.id) && !deletedClassIdsRef.current.has(c.id));
+      return sortByFa([...fresh, ...extra], (c) => c.name);
+    });
+    setRoster((prev) => {
+      const fresh = ro.filter((r) => !deletedRosterIdsRef.current.has(r.id));
+      const freshIds = new Set(fresh.map((r) => r.id));
+      const extra = prev.filter((r) => !freshIds.has(r.id) && !deletedRosterIdsRef.current.has(r.id));
+      return sortByFa([...fresh, ...extra], (r) => r.fullname);
+    });
+    setQuestions((prev) => {
+      const fresh = qs.filter((q) => !deletedQuestionIdsRef.current.has(q.id));
+      const freshIds = new Set(fresh.map((q) => q.id));
+      const extra = prev.filter((q) => !freshIds.has(q.id) && !deletedQuestionIdsRef.current.has(q.id));
+      return [...fresh, ...extra];
+    });
     setMessages(msg);
     setCheatAlerts(alerts);
     setTeachers(allTeachers);
@@ -190,10 +224,23 @@ function EduExamApp() {
   // is only eventually consistent, so a just-written/deleted key can take
   // a few seconds to show up (or disappear) via refresh(). These update the
   // UI immediately; refresh() still runs afterward to stay in sync.
+  const addLocalExam = useCallback((record) => {
+    setExams((prev) => [...prev, record]);
+  }, []);
+  const updateLocalExam = useCallback((record) => {
+    setExams((prev) => prev.map((e) => (e.id === record.id ? record : e)));
+  }, []);
+  const removeLocalExam = useCallback((id) => {
+    deletedExamIdsRef.current.add(id);
+    setTimeout(() => deletedExamIdsRef.current.delete(id), 20000);
+    setExams((prev) => prev.filter((e) => e.id !== id));
+  }, []);
   const addLocalClass = useCallback((record) => {
     setClasses((prev) => sortByFa([...prev, record], (c) => c.name));
   }, []);
   const removeLocalClass = useCallback((id) => {
+    deletedClassIdsRef.current.add(id);
+    setTimeout(() => deletedClassIdsRef.current.delete(id), 20000);
     setClasses((prev) => prev.filter((c) => c.id !== id));
     setRoster((prev) => prev.filter((r) => r.class_id !== id));
   }, []);
@@ -210,7 +257,31 @@ function EduExamApp() {
     setRoster((prev) => sortByFa(prev.map((r) => (r.id === record.id ? record : r)), (r) => r.fullname));
   }, []);
   const removeLocalRoster = useCallback((id) => {
+    deletedRosterIdsRef.current.add(id);
+    setTimeout(() => deletedRosterIdsRef.current.delete(id), 20000);
     setRoster((prev) => prev.filter((r) => r.id !== id));
+  }, []);
+  const addLocalQuestion = useCallback((record) => {
+    setQuestions((prev) => [...prev, record]);
+  }, []);
+  const addLocalQuestionMany = useCallback((records) => {
+    setQuestions((prev) => [...prev, ...records]);
+  }, []);
+  const updateLocalQuestion = useCallback((record) => {
+    setQuestions((prev) => prev.map((q) => (q.id === record.id ? record : q)));
+  }, []);
+  const removeLocalQuestion = useCallback((id) => {
+    deletedQuestionIdsRef.current.add(id);
+    setTimeout(() => deletedQuestionIdsRef.current.delete(id), 20000);
+    setQuestions((prev) => prev.filter((q) => q.id !== id));
+  }, []);
+  const removeLocalQuestionMany = useCallback((ids) => {
+    ids.forEach((id) => {
+      deletedQuestionIdsRef.current.add(id);
+      setTimeout(() => deletedQuestionIdsRef.current.delete(id), 20000);
+    });
+    const idSet = new Set(ids);
+    setQuestions((prev) => prev.filter((q) => !idSet.has(q.id)));
   }, []);
 
   if (!ready || !sessionChecked) {
@@ -308,6 +379,14 @@ function EduExamApp() {
         addLocalClass={addLocalClass}
         removeLocalClass={removeLocalClass}
         updateLocalClass={updateLocalClass}
+        addLocalRoster={addLocalRoster}
+        addLocalRosterMany={addLocalRosterMany}
+        updateLocalRoster={updateLocalRoster}
+        removeLocalRoster={removeLocalRoster}
+        addLocalQuestion={addLocalQuestion}
+        addLocalQuestionMany={addLocalQuestionMany}
+        updateLocalQuestion={updateLocalQuestion}
+        removeLocalQuestion={removeLocalQuestion}
       />
     );
   }
@@ -399,6 +478,11 @@ function EduExamApp() {
             onNavigate={(v, examId) => { setView(v); if (examId) setActiveExamId(examId); }}
             onOpenExam={(id) => { setActiveExamId(id); setView("manageQuestions"); }}
             refresh={refresh}
+            addLocalExam={addLocalExam}
+            updateLocalExam={updateLocalExam}
+            removeLocalExam={removeLocalExam}
+            addLocalQuestionMany={addLocalQuestionMany}
+            removeLocalQuestionMany={removeLocalQuestionMany}
           />
         )}
         {view === "manageQuestions" && activeExam && (
@@ -406,12 +490,20 @@ function EduExamApp() {
             exam={activeExam} questions={questions} exams={exams} teacher={teacher}
             onBack={() => setView("exams")}
             refresh={refresh}
+            addLocalQuestion={addLocalQuestion}
+            addLocalQuestionMany={addLocalQuestionMany}
+            updateLocalQuestion={updateLocalQuestion}
+            removeLocalQuestion={removeLocalQuestion}
           />
         )}
         {view === "questionbank" && (
           <QuestionBankScreen
             teacher={teacher} questions={questions} exams={exams}
             refresh={refresh}
+            addLocalQuestion={addLocalQuestion}
+            addLocalQuestionMany={addLocalQuestionMany}
+            updateLocalQuestion={updateLocalQuestion}
+            removeLocalQuestion={removeLocalQuestion}
           />
         )}
         {view === "results" && (

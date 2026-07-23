@@ -67,7 +67,7 @@ function DashboardScreen({ teacher, exams, questions, students, answers, onNavig
   );
 }
 
-function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavigate, onOpenExam, refresh }) {
+function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavigate, onOpenExam, refresh, addLocalExam, updateLocalExam, removeLocalExam, addLocalQuestionMany, removeLocalQuestionMany }) {
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
   const [duration, setDuration] = useState("");
@@ -104,10 +104,9 @@ function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavig
     if (!title.trim()) return;
     setSaving(true);
     const id = uid();
-    const durMin = Number(duration);
-    await setJSON(`exam:${id}`, {
+    const record = {
       id, title: title.trim(), teacher_id: teacher.username,
-      duration_minutes: durMin > 0 ? durMin : null,
+      duration_minutes: Number(duration) > 0 ? Number(duration) : null,
       access_code: accessCode.trim() || null,
       opens_at: opensAt ? new Date(opensAt).toISOString() : null,
       closes_at: closesAt ? new Date(closesAt).toISOString() : null,
@@ -121,7 +120,12 @@ function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavig
       require_fullscreen: requireFullscreen,
       no_copy_paste: noCopyPaste,
       created_at: new Date().toISOString(),
-    });
+    };
+    // بلافاصله نشونش می‌دیم، وگرنه چون لیست سرور ممکنه چند ثانیه عقب‌تر
+    // باشه، صفحه‌ی «مدیریت سوالات» که بلافاصله بعدش باز می‌شه ممکنه امتحان
+    // تازه‌ساخته‌شده رو پیدا نکنه.
+    addLocalExam && addLocalExam(record);
+    await setJSON(`exam:${id}`, record);
     setSaving(false);
     setTitle("");
     setDuration("");
@@ -143,8 +147,10 @@ function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavig
   };
 
   const removeExam = async (examId) => {
-    await deleteKey(`exam:${examId}`);
     const qs = questions.filter((q) => q.exam_id === examId);
+    removeLocalExam && removeLocalExam(examId);
+    removeLocalQuestionMany && removeLocalQuestionMany(qs.map((q) => q.id));
+    await deleteKey(`exam:${examId}`);
     await Promise.all(qs.map((q) => deleteKey(`question:${q.id}`)));
     const ansStudentIds = new Set(answers.filter((a) => a.exam_id === examId).map((a) => a.student_id));
     await Promise.all([...ansStudentIds].map((sid) => deleteKey(`answers:${sid}`)));
@@ -154,14 +160,13 @@ function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavig
   const cloneExam = async (ex) => {
     setCloningId(ex.id);
     const newId = uid();
-    await setJSON(`exam:${newId}`, {
-      ...ex, id: newId, title: ex.title + " (کپی)", created_at: new Date().toISOString(),
-    });
+    const newExam = { ...ex, id: newId, title: ex.title + " (کپی)", created_at: new Date().toISOString() };
     const qs = questions.filter((q) => q.exam_id === ex.id);
-    await Promise.all(qs.map((q) => {
-      const newQId = uid();
-      return setJSON(`question:${newQId}`, { ...q, id: newQId, exam_id: newId });
-    }));
+    const newQs = qs.map((q) => ({ ...q, id: uid(), exam_id: newId }));
+    addLocalExam && addLocalExam(newExam);
+    addLocalQuestionMany && addLocalQuestionMany(newQs);
+    await setJSON(`exam:${newId}`, newExam);
+    await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setCloningId(null);
     await refresh();
   };
@@ -312,7 +317,7 @@ function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavig
   );
 }
 
-function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
+function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh, addLocalQuestion, addLocalQuestionMany, updateLocalQuestion, removeLocalQuestion }) {
   const examQuestions = questions.filter((q) => q.exam_id === exam.id);
   const [qType, setQType] = useState("mc"); // 'mc' | 'mc_multi' | 'essay'
   const [qText, setQText] = useState("");
@@ -445,6 +450,8 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
       payload.model_answer = modelAnswer.trim() || null;
       payload.keywords = keywords.split(",").map((k) => k.trim()).filter(Boolean);
     }
+    if (editingId) updateLocalQuestion && updateLocalQuestion(payload);
+    else addLocalQuestion && addLocalQuestion(payload);
     await setJSON(`question:${id}`, payload);
     setSaving(false);
     resetForm();
@@ -452,6 +459,7 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
   };
 
   const removeQuestion = async (id) => {
+    removeLocalQuestion && removeLocalQuestion(id);
     await deleteKey(`question:${id}`);
     if (editingId === id) resetForm();
     await refresh();
@@ -526,7 +534,12 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
       setBulkError("هیچ سوال معتبری پیدا نشد. فرمت را بررسی کن.");
       return;
     }
-    await Promise.all(parsed.map((p) => setJSON(`question:${uid()}`, { id: uid(), exam_id: exam.id, tags: [], ...p })));
+    // نکته: قبلاً برای هر سوال uid() دوبار صدا زده می‌شد (یکی برای کلید KV،
+    // یکی برای فیلد id خود رکورد)، که باعث می‌شد این دو شناسه با هم فرق
+    // کنن — الان یه‌بار صدا زده می‌شه و همون‌جا نگه داشته می‌شه.
+    const newQs = parsed.map((p) => ({ id: uid(), exam_id: exam.id, tags: [], ...p }));
+    addLocalQuestionMany && addLocalQuestionMany(newQs);
+    await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setBulkError(errors.length > 0 ? `${parsed.length} سوال اضافه شد؛ ${errors.length} بلوک نامعتبر نادیده گرفته شد.` : "");
     setBulkText("");
     await refresh();
@@ -539,10 +552,12 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
 
   const runCopyFrom = async () => {
     const toCopy = sourceQuestions.filter((q) => copySelected.includes(q.id));
-    await Promise.all(toCopy.map((q) => {
+    const newQs = toCopy.map((q) => {
       const { id, exam_id, ...rest } = q;
-      return setJSON(`question:${uid()}`, { id: uid(), exam_id: exam.id, ...rest });
-    }));
+      return { id: uid(), exam_id: exam.id, ...rest };
+    });
+    addLocalQuestionMany && addLocalQuestionMany(newQs);
+    await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setShowCopyFrom(false);
     setCopySelected([]);
     setCopySourceExam("");
@@ -551,10 +566,12 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
 
   const runAddFromBank = async () => {
     const toAdd = bankQuestions.filter((q) => bankSelected.includes(q.id));
-    await Promise.all(toAdd.map((q) => {
+    const newQs = toAdd.map((q) => {
       const { id, exam_id, owner_id, ...rest } = q;
-      return setJSON(`question:${uid()}`, { id: uid(), exam_id: exam.id, ...rest });
-    }));
+      return { id: uid(), exam_id: exam.id, ...rest };
+    });
+    addLocalQuestionMany && addLocalQuestionMany(newQs);
+    await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setShowAddFromBank(false);
     setBankSelected([]);
     await refresh();
@@ -963,7 +980,7 @@ SECTION: قلمرو زبانی`}</pre>
    QUESTION BANK (questions independent of any exam)
 --------------------------------------------------------- */
 
-function QuestionBankScreen({ teacher, questions, exams, refresh, onBack }) {
+function QuestionBankScreen({ teacher, questions, exams, refresh, addLocalQuestion, addLocalQuestionMany, updateLocalQuestion, removeLocalQuestion }) {
   const bankQuestions = questions.filter((q) => !q.exam_id && q.owner_id === teacher.username);
   const [qType, setQType] = useState("mc");
   const [qText, setQText] = useState("");
@@ -1038,6 +1055,8 @@ function QuestionBankScreen({ teacher, questions, exams, refresh, onBack }) {
       payload.model_answer = modelAnswer.trim() || null;
       payload.keywords = keywords.split(",").map((k) => k.trim()).filter(Boolean);
     }
+    if (editingId) updateLocalQuestion && updateLocalQuestion(payload);
+    else addLocalQuestion && addLocalQuestion(payload);
     await setJSON(`question:${id}`, payload);
     setSaving(false);
     resetForm();
@@ -1045,9 +1064,61 @@ function QuestionBankScreen({ teacher, questions, exams, refresh, onBack }) {
   };
 
   const removeQuestion = async (id) => {
+    removeLocalQuestion && removeLocalQuestion(id);
     await deleteKey(`question:${id}`);
     if (editingId === id) resetForm();
     await refresh();
+  };
+
+  const parseBulkQuestions = (text) => {
+    const blocks = text.split(/\n\s*(?:---)?\s*\n/).map((b) => b.trim()).filter(Boolean);
+    const parsed = [];
+    const errors = [];
+    blocks.forEach((block, idx) => {
+      const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+      const qLine = lines.find((l) => /^Q:/i.test(l));
+      const typeLine = lines.find((l) => /^TYPE:/i.test(l));
+      const isEssay = typeLine && /essay|تشریحی/i.test(typeLine.replace(/^TYPE:/i, "").trim());
+      const markLine = lines.find((l) => /^MARK:/i.test(l));
+      if (!qLine) {
+        errors.push(idx + 1);
+        return;
+      }
+      if (isEssay) {
+        const keywordsLine = lines.find((l) => /^KEYWORDS:/i.test(l));
+        const answerLine = lines.find((l) => /^ANSWER:/i.test(l));
+        parsed.push({
+          type: "essay",
+          question_text: qLine.replace(/^Q:/i, "").trim(),
+          model_answer: answerLine ? answerLine.replace(/^ANSWER:/i, "").trim() : "",
+          keywords: keywordsLine ? keywordsLine.replace(/^KEYWORDS:/i, "").trim() : "",
+          mark: markLine ? Number(markLine.replace(/^MARK:/i, "").trim()) || 1 : 1,
+        });
+        return;
+      }
+      const optA = lines.find((l) => /^A\)/i.test(l));
+      const optB = lines.find((l) => /^B\)/i.test(l));
+      const optC = lines.find((l) => /^C\)/i.test(l));
+      const optD = lines.find((l) => /^D\)/i.test(l));
+      const ansLine = lines.find((l) => /^ANSWER:/i.test(l));
+      if (!optA || !optB || !optC || !optD || !ansLine) {
+        errors.push(idx + 1);
+        return;
+      }
+      const answers = ansLine.replace(/^ANSWER:/i, "").trim().toUpperCase().split(/[,\s]+/).filter(Boolean);
+      parsed.push({
+        type: answers.length > 1 ? "mc_multi" : "mc",
+        question_text: qLine.replace(/^Q:/i, "").trim(),
+        option_a: optA.replace(/^A\)/i, "").trim(),
+        option_b: optB.replace(/^B\)/i, "").trim(),
+        option_c: optC.replace(/^C\)/i, "").trim(),
+        option_d: optD.replace(/^D\)/i, "").trim(),
+        correct_answer: answers.length === 1 ? answers[0] : undefined,
+        correct_answers: answers.length > 1 ? answers : undefined,
+        mark: markLine ? Number(markLine.replace(/^MARK:/i, "").trim()) || 1 : 1,
+      });
+    });
+    return { parsed, errors };
   };
 
   const runBulkImport = async () => {
@@ -1056,7 +1127,9 @@ function QuestionBankScreen({ teacher, questions, exams, refresh, onBack }) {
       setBulkError("هیچ سوال معتبری پیدا نشد. فرمت را بررسی کن.");
       return;
     }
-    await Promise.all(parsed.map((p) => setJSON(`question:${uid()}`, { id: uid(), exam_id: null, owner_id: teacher.username, tags: [], ...p })));
+    const newQs = parsed.map((p) => ({ id: uid(), exam_id: null, owner_id: teacher.username, tags: [], ...p }));
+    addLocalQuestionMany && addLocalQuestionMany(newQs);
+    await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setBulkError(errors.length > 0 ? `${parsed.length} سوال اضافه شد؛ ${errors.length} بلوک نامعتبر نادیده گرفته شد.` : "");
     setBulkText("");
     await refresh();
@@ -1066,10 +1139,12 @@ function QuestionBankScreen({ teacher, questions, exams, refresh, onBack }) {
   const runAddToExam = async () => {
     if (!targetExam || addSelected.length === 0) return;
     const toAdd = bankQuestions.filter((q) => addSelected.includes(q.id));
-    await Promise.all(toAdd.map((q) => {
+    const newQs = toAdd.map((q) => {
       const { id, exam_id, owner_id, ...rest } = q;
-      return setJSON(`question:${uid()}`, { id: uid(), exam_id: targetExam, ...rest });
-    }));
+      return { id: uid(), exam_id: targetExam, ...rest };
+    });
+    addLocalQuestionMany && addLocalQuestionMany(newQs);
+    await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setShowAddToExam(false);
     setAddSelected([]);
     setTargetExam("");

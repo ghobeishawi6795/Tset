@@ -186,7 +186,7 @@ function AdminProfileModal({ teacher, onSaved, onClose }) {
   );
 }
 
-function AdminRosterModal({ cls, roster, onClose, refresh }) {
+function AdminRosterModal({ cls, roster, onClose, refresh, addLocalRoster, addLocalRosterMany, updateLocalRoster, removeLocalRoster }) {
   const members = roster.filter((r) => r.class_id === cls.id);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -219,6 +219,7 @@ function AdminRosterModal({ cls, roster, onClose, refresh }) {
       id, class_id: cls.id, teacher_id: cls.teacher_id || null,
       fullname: name.trim(), code, created_at: new Date().toISOString(),
     };
+    addLocalRoster && addLocalRoster(record);
     await setJSON(`roster:${id}`, record);
     setSaving(false);
     setName("");
@@ -232,6 +233,7 @@ function AdminRosterModal({ cls, roster, onClose, refresh }) {
     const existingNames = new Set(members.map((m) => m.fullname.trim()));
     const usedCodes = roster.map((r) => r.code);
     let added = 0, skipped = 0;
+    const newRecords = [];
     for (const n of names) {
       if (existingNames.has(n)) { skipped++; continue; }
       existingNames.add(n);
@@ -242,9 +244,11 @@ function AdminRosterModal({ cls, roster, onClose, refresh }) {
         id, class_id: cls.id, teacher_id: cls.teacher_id || null,
         fullname: n, code, created_at: new Date().toISOString(),
       };
+      newRecords.push(record);
       await setJSON(`roster:${id}`, record);
       added++;
     }
+    if (newRecords.length > 0) addLocalRosterMany && addLocalRosterMany(newRecords);
     setBulkSaving(false);
     setBulkMsg(`${added} دانش‌آموز اضافه شد${skipped > 0 ? ` — ${skipped} مورد تکراری نادیده گرفته شد.` : "."}`);
     if (added > 0) { setBulkText(""); await refresh(); }
@@ -277,12 +281,15 @@ function AdminRosterModal({ cls, roster, onClose, refresh }) {
   const regenerateCodeFor = async (member) => {
     const allCodes = roster.filter((r) => r.id !== member.id).map((r) => r.code);
     const code = generateCode(allCodes);
-    await setJSON(`roster:${member.id}`, { ...member, code });
+    const updated = { ...member, code };
+    updateLocalRoster && updateLocalRoster(updated);
+    await setJSON(`roster:${member.id}`, updated);
     await refresh();
   };
 
   const removeStudent = async (member) => {
     if (!window.confirm(`«${member.fullname}» از این کلاس حذف شود؟`)) return;
+    removeLocalRoster && removeLocalRoster(member.id);
     await deleteKey(`roster:${member.id}`);
     await refresh();
   };
@@ -459,7 +466,7 @@ function AdminSidebar({ active, onNavigate, onSettings, onHelp, onLogout, adminN
   );
 }
 
-function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, students, questions, answers, messages, cheatAlerts, onLogout, onUpdateSelf, refresh, addLocalClass, removeLocalClass, updateLocalClass }) {
+function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, students, questions, answers, messages, cheatAlerts, onLogout, onUpdateSelf, refresh, addLocalClass, removeLocalClass, updateLocalClass, addLocalRoster, addLocalRosterMany, updateLocalRoster, removeLocalRoster, addLocalQuestion, addLocalQuestionMany, updateLocalQuestion, removeLocalQuestion }) {
   const [view, setView] = useState("dashboard");
   const [showCreate, setShowCreate] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState(null);
@@ -1124,6 +1131,10 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
           roster={roster}
           onClose={() => setManagingRosterClass(null)}
           refresh={refresh}
+          addLocalRoster={addLocalRoster}
+          addLocalRosterMany={addLocalRosterMany}
+          updateLocalRoster={updateLocalRoster}
+          removeLocalRoster={removeLocalRoster}
         />
       )}
 
