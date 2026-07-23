@@ -19,6 +19,3 @@ binding = "AI"
 binding = "DB"
 database_name = "exam_db"
 database_id = "9f7fda8d-ba1b-4ea9-941d-07c82e2414f8"
-
-[ai]
-binding = "AI"
