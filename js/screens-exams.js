@@ -345,6 +345,21 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
   const [aiQType, setAiQType] = useState("mc"); // 'mc' | 'essay' | 'mixed'
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
+  const [aiLicenseLoading, setAiLicenseLoading] = useState(false);
+  const [aiLicenseMsg, setAiLicenseMsg] = useState("");
+
+  const acceptAiLicense = async () => {
+    setAiLicenseMsg("");
+    setAiLicenseLoading(true);
+    try {
+      const r = await fetch("/api/ai/accept-license", { method: "POST", headers: authHeaders() });
+      const data = await r.json().catch(() => ({}));
+      setAiLicenseMsg(r.ok ? "انجام شد — حالا «تولید سوال» رو دوباره امتحان کن." : (data.error || "فعال‌سازی با خطا مواجه شد."));
+    } catch {
+      setAiLicenseMsg("اتصال برقرار نشد.");
+    }
+    setAiLicenseLoading(false);
+  };
 
   const generateWithAI = async () => {
     setAiError("");
@@ -805,6 +820,19 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
                     }}
                   />
                 </label>
+                {teacher.role === "admin" && (
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      type="button"
+                      onClick={acceptAiLicense}
+                      disabled={aiLicenseLoading}
+                      style={{ fontSize: 11.5, color: "#2563EB", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}
+                    >
+                      {aiLicenseLoading ? "در حال فعال‌سازی..." : "اگه اولین باره از عکس استفاده می‌کنی و خطا گرفتی، اول این‌جا رو بزن (فعال‌سازی یک‌باره)"}
+                    </button>
+                    {aiLicenseMsg && <div style={{ fontSize: 11.5, color: "#64748B", marginTop: 4 }}>{aiLicenseMsg}</div>}
+                  </div>
+                )}
               </div>
             )}
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
