@@ -266,6 +266,7 @@ async function handleAIGenerateQuestions(request, env) {
 
   try {
     let result;
+    let debugOcrText = null;
     if (mode === "image") {
       if (!imageBase64) return json({ error: "تصویری ارسال نشده" }, 400);
       // مدل‌های تصویری Workers AI معمولاً بایت‌های خام تصویر رو به‌صورت آرایه می‌خوان
@@ -275,13 +276,16 @@ async function handleAIGenerateQuestions(request, env) {
       // و فرمت خاص رو رعایت کنه، مدل‌های سبک تصویری زیاد توی یه حلقه‌ی تکراری
       // گیر می‌کنن. قدم دوم رو به همون مدل قوی متنی می‌سپاریم که از قبل خوب کار می‌کرد.
       const ocrResult = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
-        prompt: "Transcribe all readable text in this image exactly as it appears, with no summarizing, translating, or commentary. If there is no readable text, reply with exactly: NO_TEXT_FOUND",
+        prompt: "You are an OCR engine, not an image describer. Output ONLY the exact words/sentences printed or written in this image, verbatim, preserving line breaks. Do NOT describe the image, its colors, its layout, or its language — only transcribe the actual text content, in whatever language it is written in. If there is no readable text, reply with exactly: NO_TEXT_FOUND",
         image: Array.from(binary),
         max_tokens: 2048,
       });
       const extractedText = (ocrResult && (ocrResult.response || ocrResult.result || "")) || "";
-      if (!extractedText.trim() || extractedText.includes("NO_TEXT_FOUND")) {
-        return json({ error: "متنی از تصویر خونده نشد. یه عکس واضح‌تر و خواناتر امتحان کن." }, 502);
+      debugOcrText = extractedText;
+      // اگه مدل به‌جای رونویسی متن، توضیح داده (مثلاً درباره‌ی رنگ یا زبان تصویر)،
+      // معمولاً نتیجه خیلی کوتاهه — بهتره این‌جا جلوش رو بگیریم تا سوال بی‌ربط تولید نشه.
+      if (!extractedText.trim() || extractedText.includes("NO_TEXT_FOUND") || extractedText.trim().length < 40) {
+        return json({ error: "متن قابل استفاده‌ای از تصویر خونده نشد (شاید متن خیلی کوچیک یا کم‌واضح بود). یه عکس واضح‌تر و با نور بهتر امتحان کن، یا نزدیک‌تر از متن عکس بگیر.", debugOcrText: extractedText }, 502);
       }
       result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
         messages: [
@@ -302,7 +306,7 @@ async function handleAIGenerateQuestions(request, env) {
     }
     const outputText = (result && (result.response || result.result || "")) || "";
     if (!outputText.trim()) return json({ error: "هوش مصنوعی خروجی برنگردوند، دوباره امتحان کن." }, 502);
-    return json({ ok: true, text: outputText.trim() });
+    return json({ ok: true, text: outputText.trim(), debugOcrText });
   } catch (err) {
     console.error("handleAIGenerateQuestions failed:", err);
     return json({ error: `تولید سوال با خطا مواجه شد: ${err.message || err}` }, 500);
