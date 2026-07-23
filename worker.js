@@ -270,10 +270,25 @@ async function handleAIGenerateQuestions(request, env) {
       if (!imageBase64) return json({ error: "تصویری ارسال نشده" }, 400);
       // مدل‌های تصویری Workers AI معمولاً بایت‌های خام تصویر رو به‌صورت آرایه می‌خوان
       const binary = Uint8Array.from(atob(imageBase64), (c) => c.charCodeAt(0));
-      result = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
-        prompt: `${instructions}\n\nمتن/محتوای داخل این تصویر رو بخون و از روی همون محتوا سوال بساز.`,
+      // قدم اول: مدل تصویری فقط متن داخل عکس رو استخراج می‌کنه (کار ساده‌تر و
+      // قابل‌اعتمادتر). اگه هم‌زمان از مدل بخوایم عکس رو بخونه، فارسی جواب بده،
+      // و فرمت خاص رو رعایت کنه، مدل‌های سبک تصویری زیاد توی یه حلقه‌ی تکراری
+      // گیر می‌کنن. قدم دوم رو به همون مدل قوی متنی می‌سپاریم که از قبل خوب کار می‌کرد.
+      const ocrResult = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
+        prompt: "Transcribe all readable text in this image exactly as it appears, with no summarizing, translating, or commentary. If there is no readable text, reply with exactly: NO_TEXT_FOUND",
         image: Array.from(binary),
         max_tokens: 2048,
+      });
+      const extractedText = (ocrResult && (ocrResult.response || ocrResult.result || "")) || "";
+      if (!extractedText.trim() || extractedText.includes("NO_TEXT_FOUND")) {
+        return json({ error: "متنی از تصویر خونده نشد. یه عکس واضح‌تر و خواناتر امتحان کن." }, 502);
+      }
+      result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+        messages: [
+          { role: "system", content: instructions },
+          { role: "user", content: `این متن رو بخون و از روش سوال بساز:\n\n${extractedText.slice(0, 12000)}` },
+        ],
+        max_tokens: 3000,
       });
     } else {
       if (!sourceText || !sourceText.trim()) return json({ error: "متنی ارسال نشده" }, 400);
