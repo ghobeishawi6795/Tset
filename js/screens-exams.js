@@ -820,19 +820,17 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
                     }}
                   />
                 </label>
-                {teacher.role === "admin" && (
-                  <div style={{ marginTop: 8 }}>
-                    <button
-                      type="button"
-                      onClick={acceptAiLicense}
-                      disabled={aiLicenseLoading}
-                      style={{ fontSize: 11.5, color: "#2563EB", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}
-                    >
-                      {aiLicenseLoading ? "در حال فعال‌سازی..." : "اگه اولین باره از عکس استفاده می‌کنی و خطا گرفتی، اول این‌جا رو بزن (فعال‌سازی یک‌باره)"}
-                    </button>
-                    {aiLicenseMsg && <div style={{ fontSize: 11.5, color: "#64748B", marginTop: 4 }}>{aiLicenseMsg}</div>}
-                  </div>
-                )}
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    type="button"
+                    onClick={acceptAiLicense}
+                    disabled={aiLicenseLoading}
+                    style={{ fontSize: 11.5, color: "#2563EB", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}
+                  >
+                    {aiLicenseLoading ? "در حال فعال‌سازی..." : "اگه اولین باره از عکس استفاده می‌کنی و خطا گرفتی، اول این‌جا رو بزن (فعال‌سازی یک‌باره)"}
+                  </button>
+                  {aiLicenseMsg && <div style={{ fontSize: 11.5, color: "#64748B", marginTop: 4 }}>{aiLicenseMsg}</div>}
+                </div>
               </div>
             )}
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
