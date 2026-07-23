@@ -361,8 +361,11 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
     setAiLicenseLoading(false);
   };
 
+  const [aiOcrDebug, setAiOcrDebug] = useState("");
+
   const generateWithAI = async () => {
     setAiError("");
+    setAiOcrDebug("");
     if (aiMode === "text" && !aiSourceText.trim()) { setAiError("یه متن وارد کن."); return; }
     if (aiMode === "image" && !aiImageData) { setAiError("یه تصویر انتخاب کن."); return; }
     setAiLoading(true);
@@ -379,6 +382,7 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
         }),
       });
       const data = await r.json().catch(() => ({}));
+      if (data.debugOcrText !== undefined) setAiOcrDebug(data.debugOcrText || "(چیزی برنگشت)");
       if (!r.ok) { setAiError(data.error || "تولید سوال با خطا مواجه شد."); setAiLoading(false); return; }
       setBulkText((prev) => (prev ? prev + "\n\n" : "") + data.text);
     } catch {
@@ -844,6 +848,12 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh }) {
               </select>
             </div>
             {aiError && <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 8 }}>{aiError}</div>}
+            {aiOcrDebug && (
+              <div style={{ fontSize: 11, color: "#64748B", background: "#fff", border: "1px solid #E2E8F0", borderRadius: 8, padding: 8, marginBottom: 8, maxHeight: 140, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>متنی که از عکس خونده شد (برای بررسی):</div>
+                {aiOcrDebug}
+              </div>
+            )}
             <Button type="button" onClick={generateWithAI} disabled={aiLoading} style={{ width: "100%", justifyContent: "center" }}>
               {aiLoading ? "در حال تولید..." : "تولید سوال"}
             </Button>
