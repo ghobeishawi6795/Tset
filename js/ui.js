@@ -374,7 +374,7 @@ function Badge({ children, tone = "blue" }) {
    Sidebar (shared across teacher screens)
 --------------------------------------------------------- */
 
-function Sidebar({ active, onNavigate, onLogout, teacherName }) {
+function Sidebar({ active, onNavigate, onLogout, teacherName, onHelp }) {
   const items = [
     { key: "dashboard", label: "داشبورد", icon: LayoutDashboard },
     { key: "exams", label: "آزمون‌ها", icon: FileText },
@@ -417,6 +417,15 @@ function Sidebar({ active, onNavigate, onLogout, teacherName }) {
             </div>
           );
         })}
+        {onHelp && (
+          <div
+            onClick={onHelp}
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderRadius: 10, cursor: "pointer", marginBottom: 4, color: "#AAB8D1", fontSize: 14, fontWeight: 600 }}
+          >
+            <HelpCircle size={17} />
+            راهنما
+          </div>
+        )}
       </div>
       <div style={{ padding: 12, borderTop: "1px solid #22385F" }}>
         <div style={{ fontSize: 12, color: "#7C8CAE", padding: "6px 14px 12px" }}>{teacherName}</div>

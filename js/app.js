@@ -8,6 +8,7 @@ function EduExamApp() {
   const [teacher, setTeacher] = useState(null);
   const [view, setView] = useState("dashboard");
   const [activeExamId, setActiveExamId] = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
   const [activeClassId, setActiveClassId] = useState(null);
   // If the URL is a student exam link (?exam=ID), jump straight into it, no login needed.
   const [studentExamId, setStudentExamId] = useState(
@@ -463,7 +464,25 @@ function EduExamApp() {
         onNavigate={(v) => { setView(v); setActiveExamId(null); setActiveClassId(null); }}
         onLogout={() => { performLogout(); setTeacher(null); setView("dashboard"); }}
         teacherName={teacher.fullname}
+        onHelp={() => setShowHelp(true)}
       />
+      {showHelp && (
+        <Modal title="راهنمای آزمون‌ساز" onClose={() => setShowHelp(false)}>
+          <div style={{ fontSize: 13.5, color: "#334155", lineHeight: 2.1 }}>
+            <b>آزمون‌ها:</b> از این بخش آزمون جدید بساز، سوال‌هایش را اضافه کن (تکی، با پیست کردن چند سوال با هم، با بارگذاری از بانک سوال، یا با تولید خودکار توسط هوش مصنوعی)، و لینک/کد ورود را در اختیار دانش‌آموزان بگذار.
+            <br /><br />
+            <b>بانک سوال:</b> سوال‌هایی که ممکن است در چند آزمون استفاده شوند را اینجا نگه‌داری کن؛ از همین‌جا هم می‌توان سوال جدید ساخت، از فایل متنی وارد کرد، یا با فایل اکسل به‌صورت گروهی اضافه کرد.
+            <br /><br />
+            <b>کلاس‌ها و دانش‌آموزان:</b> دانش‌آموزان کلاس‌های خودت را می‌بینی. اگر مدیر مدرسه به تو کلاسی نسپرده باشد، اینجا خالی می‌ماند — برای افزودن یا جابه‌جایی دانش‌آموز باید مدیر مدرسه اقدام کند.
+            <br /><br />
+            <b>نتایج:</b> نمرات هر آزمون، تحلیل سوال‌به‌سوال، و امکان تصحیح دستی یا با کمک هوش مصنوعی برای سوال‌های تشریحی. از همین صفحه می‌توان خروجی Excel هم گرفت: نمره‌ی هر سوال برای یک آزمون خاص، یا خلاصه‌ی نمرات یک کلاس در همه‌ی آزمون‌هایش.
+            <br /><br />
+            <b>پیام‌ها:</b> ارسال پیام یا اعلان به دانش‌آموزان یا کلاس‌ها.
+            <br /><br />
+            <b>تنظیمات:</b> تغییر رمز عبور و اطلاعات حساب خودت. اگر رمز عبورت را فراموش کردی، از صفحه‌ی ورود گزینه‌ی «فراموشی رمز عبور» را بزن — لینک بازیابی به همان ایمیلی ارسال می‌شود که مدیر مدرسه برایت ثبت کرده است.
+          </div>
+        </Modal>
+      )}
       <div style={{ flex: 1, background: "#F8FAFC", minHeight: "100vh" }}>
         {view === "dashboard" && (
           <DashboardScreen
