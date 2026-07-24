@@ -388,6 +388,8 @@ function EduExamApp() {
         addLocalQuestionMany={addLocalQuestionMany}
         updateLocalQuestion={updateLocalQuestion}
         removeLocalQuestion={removeLocalQuestion}
+        removeLocalQuestionMany={removeLocalQuestionMany}
+        removeLocalExam={removeLocalExam}
       />
     );
   }

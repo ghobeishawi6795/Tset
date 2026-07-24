@@ -142,7 +142,6 @@ function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavig
     setRequireFullscreen(false);
     setNoCopyPaste(false);
     setShowCreate(false);
-    await refresh();
     onOpenExam(id);
   };
 
@@ -154,7 +153,6 @@ function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavig
     await Promise.all(qs.map((q) => deleteKey(`question:${q.id}`)));
     const ansStudentIds = new Set(answers.filter((a) => a.exam_id === examId).map((a) => a.student_id));
     await Promise.all([...ansStudentIds].map((sid) => deleteKey(`answers:${sid}`)));
-    await refresh();
   };
 
   const cloneExam = async (ex) => {
@@ -168,7 +166,6 @@ function ExamsScreen({ teacher, exams, questions, answers, classes = [], onNavig
     await setJSON(`exam:${newId}`, newExam);
     await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setCloningId(null);
-    await refresh();
   };
 
   return (
@@ -455,14 +452,12 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh, add
     await setJSON(`question:${id}`, payload);
     setSaving(false);
     resetForm();
-    await refresh();
   };
 
   const removeQuestion = async (id) => {
     removeLocalQuestion && removeLocalQuestion(id);
     await deleteKey(`question:${id}`);
     if (editingId === id) resetForm();
-    await refresh();
   };
 
   // Bulk import format, one block per question separated by a blank line or "---":
@@ -542,7 +537,6 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh, add
     await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setBulkError(errors.length > 0 ? `${parsed.length} سوال اضافه شد؛ ${errors.length} بلوک نامعتبر نادیده گرفته شد.` : "");
     setBulkText("");
-    await refresh();
     if (errors.length === 0) setShowBulkImport(false);
   };
 
@@ -561,7 +555,6 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh, add
     setShowCopyFrom(false);
     setCopySelected([]);
     setCopySourceExam("");
-    await refresh();
   };
 
   const runAddFromBank = async () => {
@@ -574,7 +567,6 @@ function QuestionsScreen({ exam, questions, exams, teacher, onBack, refresh, add
     await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setShowAddFromBank(false);
     setBankSelected([]);
-    await refresh();
   };
 
   const printExamPaper = () => {
@@ -1060,14 +1052,12 @@ function QuestionBankScreen({ teacher, questions, exams, refresh, addLocalQuesti
     await setJSON(`question:${id}`, payload);
     setSaving(false);
     resetForm();
-    await refresh();
   };
 
   const removeQuestion = async (id) => {
     removeLocalQuestion && removeLocalQuestion(id);
     await deleteKey(`question:${id}`);
     if (editingId === id) resetForm();
-    await refresh();
   };
 
   const parseBulkQuestions = (text) => {
@@ -1132,7 +1122,6 @@ function QuestionBankScreen({ teacher, questions, exams, refresh, addLocalQuesti
     await Promise.all(newQs.map((q) => setJSON(`question:${q.id}`, q)));
     setBulkError(errors.length > 0 ? `${parsed.length} سوال اضافه شد؛ ${errors.length} بلوک نامعتبر نادیده گرفته شد.` : "");
     setBulkText("");
-    await refresh();
     if (errors.length === 0) setShowBulkImport(false);
   };
 
@@ -1148,7 +1137,6 @@ function QuestionBankScreen({ teacher, questions, exams, refresh, addLocalQuesti
     setShowAddToExam(false);
     setAddSelected([]);
     setTargetExam("");
-    await refresh();
   };
 
   const allTags = [...new Set(bankQuestions.flatMap((q) => q.tags || []))];

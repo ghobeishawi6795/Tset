@@ -203,10 +203,11 @@ function AdminRosterModal({ cls, roster, onClose, refresh, addLocalRoster, addLo
   const saveEditMember = async (m) => {
     if (!editName.trim() || editName.trim() === m.fullname) { cancelEditMember(); return; }
     setSavingEdit(true);
-    await setJSON(`roster:${m.id}`, { ...m, fullname: editName.trim() });
+    const updated = { ...m, fullname: editName.trim() };
+    updateLocalRoster && updateLocalRoster(updated);
+    await setJSON(`roster:${m.id}`, updated);
     setSavingEdit(false);
     cancelEditMember();
-    await refresh();
   };
 
   const addStudent = async () => {
@@ -223,7 +224,6 @@ function AdminRosterModal({ cls, roster, onClose, refresh, addLocalRoster, addLo
     await setJSON(`roster:${id}`, record);
     setSaving(false);
     setName("");
-    await refresh();
   };
 
   const addBulkStudents = async () => {
@@ -251,7 +251,7 @@ function AdminRosterModal({ cls, roster, onClose, refresh, addLocalRoster, addLo
     if (newRecords.length > 0) addLocalRosterMany && addLocalRosterMany(newRecords);
     setBulkSaving(false);
     setBulkMsg(`${added} دانش‌آموز اضافه شد${skipped > 0 ? ` — ${skipped} مورد تکراری نادیده گرفته شد.` : "."}`);
-    if (added > 0) { setBulkText(""); await refresh(); }
+    if (added > 0) setBulkText("");
   };
 
   // آپلود فایل اکسل: فقط ستون اول شیت اول رو می‌خونه (اسم دانش‌آموز)،
@@ -284,14 +284,12 @@ function AdminRosterModal({ cls, roster, onClose, refresh, addLocalRoster, addLo
     const updated = { ...member, code };
     updateLocalRoster && updateLocalRoster(updated);
     await setJSON(`roster:${member.id}`, updated);
-    await refresh();
   };
 
   const removeStudent = async (member) => {
     if (!window.confirm(`«${member.fullname}» از این کلاس حذف شود؟`)) return;
     removeLocalRoster && removeLocalRoster(member.id);
     await deleteKey(`roster:${member.id}`);
-    await refresh();
   };
 
   return (
@@ -466,7 +464,7 @@ function AdminSidebar({ active, onNavigate, onSettings, onHelp, onLogout, adminN
   );
 }
 
-function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, students, questions, answers, messages, cheatAlerts, onLogout, onUpdateSelf, refresh, addLocalClass, removeLocalClass, updateLocalClass, addLocalRoster, addLocalRosterMany, updateLocalRoster, removeLocalRoster, addLocalQuestion, addLocalQuestionMany, updateLocalQuestion, removeLocalQuestion }) {
+function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, students, questions, answers, messages, cheatAlerts, onLogout, onUpdateSelf, refresh, addLocalClass, removeLocalClass, updateLocalClass, addLocalRoster, addLocalRosterMany, updateLocalRoster, removeLocalRoster, addLocalQuestion, addLocalQuestionMany, updateLocalQuestion, removeLocalQuestion, removeLocalQuestionMany, removeLocalExam }) {
   const [view, setView] = useState("dashboard");
   const [showCreate, setShowCreate] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState(null);
@@ -531,11 +529,11 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
     const updatedClass = { ...cls, teacher_id: newTeacherUsername || null };
     const members = roster.filter((r) => r.class_id === cls.id);
     updateLocalClass && updateLocalClass(updatedClass);
+    members.forEach((r) => updateLocalRoster && updateLocalRoster({ ...r, teacher_id: newTeacherUsername || null }));
     await Promise.all([
       setJSON(`class:${cls.id}`, updatedClass),
       ...members.map((r) => setJSON(`roster:${r.id}`, { ...r, teacher_id: newTeacherUsername || null })),
     ]);
-    await refresh();
   };
 
   const createClass = async (name) => {
@@ -546,7 +544,6 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
     // به‌نظر می‌رسید و کاربر دوباره می‌زد، که باعث دوتا شدنش می‌شد.
     addLocalClass && addLocalClass(record);
     await setJSON(`class:${id}`, record);
-    await refresh();
   };
 
   const removeClass = async (cls) => {
@@ -555,7 +552,6 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
     removeLocalClass && removeLocalClass(cls.id);
     const deletions = [deleteKey(`class:${cls.id}`), ...members.map((r) => deleteKey(`roster:${r.id}`))];
     await Promise.all(deletions);
-    await refresh();
   };
 
   const startEditClass = (c) => { setEditingClassId(c.id); setEditClassName(c.name); };
@@ -568,7 +564,6 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
     await setJSON(`class:${c.id}`, updated);
     setSavingClassName(false);
     cancelEditClass();
-    await refresh();
   };
 
   const viewTitles = { dashboard: "داشبورد مدیریت", teachers: "معلمان مدرسه", classes: "کلاس‌بندی مدرسه", exams: "آزمون‌های مدرسه", results: "نتایج و گزارش‌ها", backup: "پشتیبان‌گیری و بازیابی", students: "دانش‌آموزان مدرسه", messages: "اعلانات و پیام‌ها", schedule: "برنامه امتحانات" };
@@ -639,13 +634,15 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
   const removeExam = async (exam) => {
     const qCount = questions.filter((q) => q.exam_id === exam.id).length;
     if (!window.confirm(`آزمون «${exam.title}» حذف شود؟ ${qCount} سوال و همه‌ی نتایج این آزمون نیز حذف می‌شوند. این کار قابل بازگشت نیست.`)) return;
+    const qIds = questions.filter((q) => q.exam_id === exam.id).map((q) => q.id);
+    removeLocalExam && removeLocalExam(exam.id);
+    removeLocalQuestionMany && removeLocalQuestionMany(qIds);
     const deletions = [deleteKey(`exam:${exam.id}`)];
-    questions.filter((q) => q.exam_id === exam.id).forEach((q) => deletions.push(deleteKey(`question:${q.id}`)));
+    qIds.forEach((qid) => deletions.push(deleteKey(`question:${qid}`)));
     const examAnswerStudentIds = new Set(answers.filter((a) => a.exam_id === exam.id).map((a) => a.student_id));
     examAnswerStudentIds.forEach((sid) => deletions.push(deleteKey(`answers:${sid}`)));
     students.filter((s) => s.exam_id === exam.id).forEach((s) => deletions.push(deleteKey(`student:${s.id}`)));
     await Promise.all(deletions);
-    await refresh();
   };
 
   const schoolRoster = roster
@@ -657,20 +654,22 @@ function AdminDashboardScreen({ teacher, teachers, exams, classes, roster, stude
   const saveEditStudent = async (m) => {
     if (!editStudentName.trim() || editStudentName.trim() === m.fullname) { cancelEditStudent(); return; }
     setSavingStudentName(true);
-    await setJSON(`roster:${m.id}`, { ...m, fullname: editStudentName.trim() });
+    const updated = { ...m, fullname: editStudentName.trim() };
+    updateLocalRoster && updateLocalRoster(updated);
+    await setJSON(`roster:${m.id}`, updated);
     setSavingStudentName(false);
     cancelEditStudent();
-    await refresh();
   };
   const regenerateStudentCode = async (m) => {
     const code = generateCode(roster.filter((r) => r.id !== m.id).map((r) => r.code));
-    await setJSON(`roster:${m.id}`, { ...m, code });
-    await refresh();
+    const updated = { ...m, code };
+    updateLocalRoster && updateLocalRoster(updated);
+    await setJSON(`roster:${m.id}`, updated);
   };
   const removeSchoolStudent = async (m) => {
     if (!window.confirm(`«${m.fullname}» حذف شود؟`)) return;
+    removeLocalRoster && removeLocalRoster(m.id);
     await deleteKey(`roster:${m.id}`);
-    await refresh();
   };
 
   return (
